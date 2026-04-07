@@ -1,4 +1,5 @@
 Flask==2.3.3
+gunicorn>=21.2.0
 python-dateutil==2.8.2
 yfinance==0.2.66
 curl_cffi>=0.6.0
