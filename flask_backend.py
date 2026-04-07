@@ -96,7 +96,7 @@ def update_portfolio_state(simulation_id, simulation_data):
 class AIAdvisor:
     def __init__(self):
         self.conversation_history = []  # Store conversation memory
-        self.system_prompt = """You are a friendly and knowledgeable AI portfolio advisor and trading expert. You can provide both general trading/investment advice and analyze specific portfolio data.
+        self.system_prompt = """You are Teeby — a friendly, knowledgeable AI portfolio advisor and trading expert for TradeSphere. Your name is Teeby (spell it T-e-e-b-y). In normal conversation, just be Teeby: use your name when it fits, but do NOT explain initials, TB, or TradeBot unless the user clearly asks what your name means, why you're called Teeby, or what TB/TradeBot stands for. If they do ask that specifically, you may answer briefly: Teeby stands for TB / TradeBot. When users greet you or say "hey Teeby", respond naturally as Teeby without volunteering the backstory. You can provide both general trading/investment advice and analyze specific portfolio data.
 
 Your capabilities include:
 - Having friendly, natural conversations
@@ -121,6 +121,7 @@ Always be:
 - MEMORY-AWARE of previous questions in the conversation
 
 IMPORTANT: 
+- Do not volunteer TB, TradeBot, or name etymology unless the user explicitly asks about what Teeby means or stands for
 - You can answer general trading questions without needing specific portfolio data
 - When portfolio data is available, reference their ACTUAL holdings and performance
 - Stay focused on the specific question asked - don't give generic long responses unless specifically requested
@@ -143,7 +144,7 @@ For portfolio analysis, format responses with clear headings, bullet points, and
             print(f"Starting AI analysis with token: {cerebras_token[:10] if cerebras_token else 'None'}...")
             if not cerebras_token or cerebras_token == 'YOUR_CEREBRAS_TOKEN':
                 print("No valid token found, using fallback")
-                return """I'm sorry, but the AI advisor is not currently available. To enable AI portfolio analysis, please:
+                return """I'm sorry, but Teeby (the AI portfolio assistant) is not currently available. To enable AI portfolio analysis, please:
 
 1. Get a Cerebras API token from https://www.cerebras.net/
 2. Set the CEREBRAS_TOKEN environment variable
@@ -217,13 +218,54 @@ Be specific about their actual holdings, values, and performance metrics. Keep i
 
 Please provide focused, specific advice based on their current portfolio. Answer their question directly and concisely. If they're asking about specific investments, provide clear recommendations based on their current holdings and risk profile."""
             
+            # User explicitly asking what Teeby means / TB / TradeBot
+            elif any(
+                q in question_lower
+                for q in [
+                    'what does teeby',
+                    'why teeby',
+                    'teeby mean',
+                    'teeby stand',
+                    'teeby short for',
+                    'tradebot',
+                    'trade bot',
+                    'what tb',
+                    'tb mean',
+                    'tb stand',
+                    'what does tb',
+                ]
+            ):
+                user_message = f"""User asked: "{user_question}"
+
+{conversation_context}
+
+Answer as Teeby. Explain briefly that your name Teeby stands for TB, meaning TradeBot — TradeSphere's trading assistant. Then keep it short. Do not repeat this story unless they ask again."""
+
+            # Handle questions about the assistant's name or identity (no etymology unless asked above)
+            elif any(
+                q in question_lower
+                for q in [
+                    'who are you',
+                    "what's your name",
+                    'what is your name',
+                    'are you teeby',
+                    'are you a bot',
+                    'are you an ai',
+                ]
+            ):
+                user_message = f"""User asked: "{user_question}"
+
+{conversation_context}
+
+Answer as Teeby. Say your name is Teeby and you are TradeSphere's AI portfolio assistant. Briefly list what you can help with. Do NOT mention TB, TradeBot, or what Teeby stands for unless this message is clearly asking for that (it should not be). Keep it friendly and concise."""
+
             # Handle general greetings
             elif any(greeting in question_lower for greeting in ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']):
                 user_message = f"""User said: "{user_question}"
 
 {conversation_context}
 
-Please respond naturally and friendly to this greeting. Keep it brief and mention that you're ready to help with their portfolio questions."""
+Please respond naturally and friendly to this greeting as Teeby. Keep it brief, use your name if it fits naturally, and mention that you're ready to help with their portfolio questions."""
             
             # Handle general trading and investment questions
             elif any(query in question_lower for query in ['what is', 'how does', 'explain', 'tell me about', 'difference between', 'compare', 'vs', 'versus', 'trading strategy', 'investment strategy', 'market', 'stocks', 'bonds', 'etf', 'mutual fund', 'options', 'futures', 'crypto', 'bitcoin', 'dollar cost averaging', 'value investing', 'growth investing', 'technical analysis', 'fundamental analysis', 'risk management', 'diversification', 'asset allocation', 'rebalancing', 'tax', 'retirement', '401k', 'ira', 'roth', 'dividend', 'yield', 'pe ratio', 'p/e', 'market cap', 'volatility', 'beta', 'alpha', 'sharpe ratio', 'correlation', 'sector', 'industry', 'bull market', 'bear market', 'recession', 'inflation', 'interest rates', 'fed', 'federal reserve', 'earnings', 'revenue', 'profit', 'balance sheet', 'income statement', 'cash flow', 'debt', 'equity', 'leverage', 'margin', 'short selling', 'hedging', 'derivatives', 'commodities', 'real estate', 'reits', 'treasury', 'corporate bonds', 'junk bonds', 'credit rating', 'default', 'liquidity', 'volume', 'institutional', 'retail', 'hedge fund', 'private equity', 'venture capital', 'ipo', 'merger', 'acquisition', 'dividend yield', 'roe', 'roa', 'wacc', 'dcf', 'npv', 'irr', 'black scholes', 'greeks', 'delta', 'gamma', 'theta', 'vega', 'implied volatility', 'vix', 'sentiment', 'momentum', 'mean reversion', 'trend following', 'contrarian', 'arbitrage', 'algorithmic', 'quantitative', 'active', 'passive', 'index fund', 'expense ratio', 'management fee', 'drip', 'dividend reinvestment', 'compounding', 'compound interest', 'rule of 72', 'time value', 'present value', 'future value', 'bond pricing', 'yield to maturity', 'current yield', 'coupon', 'face value', 'par value', 'discount', 'premium', 'zero coupon', 'callable', 'putable', 'convertible', 'investment grade', 'moody', 's&p', 'fitch', 'rating', 'bankruptcy', 'reorganization', 'liquidation', 'collateral', 'secured', 'unsecured', 'senior', 'subordinated', 'preferred', 'common', 'voting', 'proxy', 'activist', 'institutional', 'retail', 'individual', 'accredited', 'high net worth', 'family office', 'endowment', 'foundation', 'pension', 'defined benefit', 'defined contribution', 'rollover', 'conversion', 'backdoor', 'mega backdoor', 'contribution limit', 'income limit', 'required minimum distribution', 'rmd', 'early withdrawal', 'penalty', 'hardship', 'loan', 'borrowing', 'day trading', 'pattern day trader', 'pdt', 'good faith', 'freeriding', 'settlement', 'clearing', 'custody', 'sipc', 'fdic', 'insurance', 'protection', 'fraud', 'scam', 'ponzi', 'pyramid', 'elder abuse', 'financial exploitation', 'estate planning', 'will', 'trust', 'revocable', 'irrevocable', 'living trust', 'gift tax', 'estate tax', 'generation skipping', 'gst', 'exemption', 'unified', 'portability', 'step up', 'basis', 'cost basis', 'wash sale', 'constructive sale', 'straddle', 'conversion', 'synthetic', 'collar', 'protective put', 'covered call', 'cash secured', 'naked', 'uncovered', 'spread', 'bull', 'bear', 'calendar', 'diagonal', 'butterfly', 'condor', 'iron', 'strangle', 'straddle', 'long', 'short', 'strike', 'expiration', 'exercise', 'assignment', 'american', 'european', 'barrier', 'knock in', 'knock out', 'binary', 'digital', 'touch', 'no touch', 'lookback', 'basket', 'rainbow', 'quanto', 'best of', 'worst of', 'outperformance', 'underperformance', 'volatility', 'variance', 'correlation', 'dispersion', 'basket', 'index', 'sector', 'single name', 'credit', 'equity', 'interest rate', 'fx', 'commodity', 'energy', 'metals', 'agriculture', 'precious', 'industrial', 'base', 'rare earth', 'supply chain', 'logistics', 'transportation', 'shipping', 'airline', 'railroad', 'trucking', 'pipeline', 'storage', 'tankers', 'dry bulk', 'container', 'ports', 'terminals', 'warehouses', 'distribution', 'fulfillment', 'ecommerce', 'online', 'digital', 'platform', 'marketplace', 'gig', 'sharing', 'subscription', 'saas', 'paas', 'iaas', 'cloud', 'edge', '5g', 'iot', 'ai', 'ml', 'blockchain', 'crypto', 'defi', 'nft', 'metaverse', 'vr', 'ar', 'mr', 'xr', 'quantum', 'biotech', 'pharma', 'healthcare', 'medical', 'device', 'diagnostic', 'therapeutic', 'drug', 'medicine', 'treatment', 'cure', 'vaccine', 'immunotherapy', 'gene therapy', 'cell therapy', 'stem cell', 'regenerative', 'precision', 'personalized', 'companion', 'biomarker', 'genomics', 'proteomics', 'metabolomics', 'transcriptomics', 'epigenomics', 'single cell', 'spatial', 'multi omics', 'systems biology', 'synthetic biology', 'bioengineering', 'biofabrication', 'organoid', 'organ on chip', 'microfluidics', 'lab on chip', 'point of care', 'telemedicine', 'digital health', 'health tech', 'medtech', 'fintech', 'insurtech', 'proptech', 'edtech', 'cleantech', 'greentech', 'climatetech', 'agtech', 'foodtech', 'retailtech', 'martech', 'adtech', 'hrtech', 'legaltech', 'regtech', 'compliance', 'cybersecurity', 'privacy', 'gdpr', 'ccpa', 'sox', 'dodd frank', 'basel', 'mifid', 'psd2', 'open banking', 'api', 'sdk', 'webhook', 'rest', 'graphql', 'grpc', 'microservices', 'serverless', 'containers', 'kubernetes', 'docker', 'devops', 'ci cd', 'git', 'github', 'gitlab', 'bitbucket', 'jira', 'confluence', 'slack', 'teams', 'zoom', 'webex', 'meet', 'hangouts', 'discord', 'telegram', 'whatsapp', 'signal', 'matrix', 'element', 'rocket chat', 'mattermost', 'zulip', 'riot', 'wire', 'threema', 'session', 'briar', 'tox', 'retroshare', 'gnunet', 'freenet', 'i2p', 'tor', 'vpn', 'proxy', 'firewall', 'antivirus', 'malware', 'ransomware', 'phishing', 'social engineering', 'penetration testing', 'vulnerability assessment', 'security audit', 'compliance audit', 'risk assessment', 'threat modeling', 'security architecture', 'zero trust', 'least privilege', 'defense in depth', 'layered security', 'multi factor', 'authentication', 'authorization', 'access control', 'identity management', 'single sign on', 'sso', 'federation', 'saml', 'oauth', 'openid connect', 'jwt', 'token', 'session', 'cookie', 'cache', 'redis', 'memcached', 'database', 'sql', 'nosql', 'mongodb', 'cassandra', 'dynamodb', 'cosmosdb', 'neo4j', 'postgresql', 'mysql', 'oracle', 'sql server', 'db2', 'teradata', 'snowflake', 'bigquery', 'redshift', 'athena', 'presto', 'hive', 'spark', 'hadoop', 'kafka', 'pulsar', 'rabbitmq', 'activemq', 'ibm mq', 'tibco', 'websphere', 'weblogic', 'tomcat', 'jetty', 'nginx', 'apache', 'iis', 'caddy', 'traefik', 'haproxy', 'varnish', 'cloudflare', 'aws', 'azure', 'gcp', 'ibm cloud', 'oracle cloud', 'alibaba cloud', 'tencent cloud', 'huawei cloud', 'digital ocean', 'linode', 'vultr', 'heroku', 'netlify', 'vercel', 'render', 'fly', 'railway', 'supabase', 'firebase', 'planetscale', 'cockroachdb', 'yugabyte', 'tidb', 'clickhouse', 'timescaledb', 'influxdb', 'prometheus', 'grafana', 'elk', 'elasticsearch', 'logstash', 'kibana', 'splunk', 'datadog', 'new relic', 'appdynamics', 'dynatrace', 'sumo logic', 'honeycomb', 'lightstep', 'jaeger', 'zipkin', 'opentelemetry', 'opencensus', 'statsd', 'telegraf', 'collectd', 'fluentd', 'fluentbit', 'vector', 'logstash', 'beats', 'filebeat', 'metricbeat', 'packetbeat', 'heartbeat', 'auditbeat', 'functionbeat', 'winlogbeat', 'journalbeat', 'osquerybeat', 'apm', 'rum', 'synthetic', 'real user monitoring', 'synthetic monitoring', 'performance monitoring', 'infrastructure monitoring', 'log monitoring', 'security monitoring', 'compliance monitoring', 'cost monitoring', 'usage monitoring', 'capacity planning', 'scaling', 'auto scaling', 'horizontal', 'vertical', 'load balancing', 'traffic management', 'cdn', 'edge computing', 'fog computing', 'mist computing', 'distributed computing', 'grid computing', 'cluster computing', 'parallel computing', 'concurrent computing', 'asynchronous', 'synchronous', 'blocking', 'non blocking', 'event driven', 'reactive', 'functional', 'object oriented', 'procedural', 'declarative', 'imperative', 'logic', 'constraint', 'rule based', 'expert system', 'knowledge base', 'ontology', 'semantic web', 'linked data', 'rdf', 'sparql', 'owl', 'skos', 'foaf', 'dublin core', 'schema.org', 'json ld', 'microdata', 'rdfa', 'turtle', 'n3', 'ntriples', 'nquads', 'trig', 'json ld', 'yaml', 'xml', 'html', 'css', 'javascript', 'typescript', 'python', 'java', 'c#', 'c++', 'c', 'go', 'rust', 'swift', 'kotlin', 'scala', 'clojure', 'haskell', 'erlang', 'elixir', 'f#', 'ocaml', 'racket', 'scheme', 'lisp', 'prolog', 'smalltalk', 'ruby', 'php', 'perl', 'r', 'matlab', 'octave', 'julia', 'fortran', 'cobol', 'ada', 'pascal', 'delphi', 'visual basic', 'vb.net', 'powershell', 'bash', 'zsh', 'fish', 'tcsh', 'ksh', 'dash', 'ash', 'busybox', 'alpine', 'ubuntu', 'debian', 'centos', 'rhel', 'fedora', 'opensuse', 'sles', 'arch', 'gentoo', 'slackware', 'freebsd', 'openbsd', 'netbsd', 'dragonfly', 'minix', 'plan9', 'inferno', 'unix', 'linux', 'windows', 'macos', 'ios', 'android', 'tizen', 'webos', 'fuchsia', 'chrome os', 'firefox os', 'sailfish', 'ubuntu touch', 'postmarketos', 'pureos', 'trisquel', 'parabola', 'hyperbola', 'guix', 'nixos', 'void', 'artix', 'endeavouros', 'manjaro', 'mx linux', 'pop os', 'elementary', 'zorin', 'mint', 'deepin', 'kali', 'parrot', 'blackarch', 'backbox', 'pentoo', 'wifi slax', 'tiny core', 'puppy', 'slitaz', 'porteus', 'antiX', 'bunsenlabs', 'crunchbang', 'sparky', 'peppermint', 'lubuntu', 'xubuntu', 'kubuntu', 'ubuntu mate', 'ubuntu budgie', 'ubuntu cinnamon', 'ubuntu kylin', 'ubuntu studio', 'edubuntu', 'mythbuntu', 'xubuntu', 'lubuntu', 'kubuntu', 'ubuntu mate', 'ubuntu budgie', 'ubuntu cinnamon', 'ubuntu kylin', 'ubuntu studio', 'edubuntu', 'mythbuntu', 'xubuntu', 'lubuntu', 'kubuntu', 'ubuntu mate', 'ubuntu budgie', 'ubuntu cinnamon', 'ubuntu kylin', 'ubuntu studio', 'edubuntu', 'mythbuntu']):
@@ -239,7 +281,7 @@ Please provide a comprehensive, educational answer about trading and investment 
 
 {conversation_context}
 
-Please explain that you're an AI portfolio advisor and trading expert who can help with both general trading/investment questions and specific portfolio analysis. Mention your capabilities in providing educational content, market insights, and personalized portfolio advice. Keep it concise and focused on what they asked."""
+Please explain that you are Teeby, the AI portfolio advisor and trading expert for TradeSphere. Say you can help with both general trading/investment questions and specific portfolio analysis. Mention your capabilities briefly. Do NOT explain TB or TradeBot unless they asked about your name's meaning. Keep it concise and focused on what they asked."""
             
             else:
                 # General portfolio analysis questions
@@ -652,7 +694,8 @@ class SimulationManager:
                 'trades': [],
                 'positions': port.positions.copy(),
                 'cash': port.cash,
-                'pnl': port.get_PNL(currtime)
+                'pnl': port.get_PNL(currtime),
+                'hedge_margin_balance': port.get_hedge_margin_balance(),
             }
             self.results.append(initial_result)
             print(f"Recorded initial result: positions={port.positions}, value=${initial_portfolio_value:,.2f}")

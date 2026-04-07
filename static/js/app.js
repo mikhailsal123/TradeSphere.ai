@@ -2,6 +2,39 @@ let currentSimulationId = null;
 let statusInterval = null;
 let aiChatVisible = false;
 
+function teebyChatAvatarHtml(small) {
+    const light =
+        typeof window.TEEBY_CHAT_AVATAR_LIGHT_URL === 'string' && window.TEEBY_CHAT_AVATAR_LIGHT_URL
+            ? window.TEEBY_CHAT_AVATAR_LIGHT_URL
+            : '/static/img/teeby-chat-light.jpg';
+    const dark =
+        typeof window.TEEBY_CHAT_AVATAR_DARK_URL === 'string' && window.TEEBY_CHAT_AVATAR_DARK_URL
+            ? window.TEEBY_CHAT_AVATAR_DARK_URL
+            : '/static/img/teeby-chat-dark.jpg';
+    const wrapCls = 'teeby-chat-avatar-wrap' + (small ? ' teeby-chat-avatar-wrap--sm' : '');
+    const dim = small ? 62 : 84;
+    return (
+        '<span class="' +
+        wrapCls +
+        '" aria-hidden="true">' +
+        '<img class="teeby-chat-img teeby-chat-img--light" src="' +
+        light +
+        '" alt="" width="' +
+        dim +
+        '" height="' +
+        dim +
+        '" loading="lazy" decoding="async">' +
+        '<img class="teeby-chat-img teeby-chat-img--dark" src="' +
+        dark +
+        '" alt="" width="' +
+        dim +
+        '" height="' +
+        dim +
+        '" loading="lazy" decoding="async">' +
+        '</span>'
+    );
+}
+
 (function () {
     function updateTsThemeToggleGlyph() {
         var btn = document.getElementById('tsThemeToggle');
@@ -1257,11 +1290,14 @@ function addMessage(sender, text) {
     messageDiv.className = `message ${sender}-message`;
     
     const time = new Date().toLocaleTimeString();
-    const icon = sender === 'ai' ? 'fas fa-robot' : 'fas fa-user';
-    
+    const lead =
+        sender === 'ai'
+            ? teebyChatAvatarHtml(false)
+            : '<i class="fas fa-user" aria-hidden="true"></i>';
+
     messageDiv.innerHTML = `
         <div class="message-content">
-            <i class="${icon}"></i>
+            ${lead}
             <div class="message-text">${formatMessage(text)}</div>
         </div>
         <div class="message-time">${time}</div>
@@ -1300,9 +1336,9 @@ function clearAIChat() {
         welcomeMessage.className = 'message ai-message';
         welcomeMessage.innerHTML = `
                 <div class="message-content">
-                    <i class="fas fa-robot"></i>
+                    ${teebyChatAvatarHtml(false)}
                     <div class="message-text">
-                        Hello! I'm your AI Portfolio Advisor. I can analyze your portfolio performance, provide insights on your trading strategy, and suggest improvements. 
+                        Hi! I'm <strong>Teeby</strong>, your AI portfolio assistant. I can analyze your portfolio performance, share insights on your trading strategy, and suggest improvements. 
                         <br><br>
                         Try asking me questions like:
                         <ul>
@@ -1371,7 +1407,7 @@ function showTypingIndicator() {
     typingDiv.className = 'ai-typing';
     typingDiv.id = 'typingIndicator';
     typingDiv.innerHTML = `
-        <i class="fas fa-robot"></i>
+        ${teebyChatAvatarHtml(true)}
         <div class="typing-dots">
             <div class="typing-dot"></div>
             <div class="typing-dot"></div>

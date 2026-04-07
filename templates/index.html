@@ -269,7 +269,13 @@
                 <!-- AI Advisor Chat -->
                 <div class="card mt-3" id="aiAdvisorCard" style="display: none;">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0 text-white"><i class="fas fa-robot"></i> AI Portfolio Advisor</h5>
+                        <h5 class="mb-0 text-white d-flex align-items-center">
+                            <span class="teeby-header-avatar-wrap" aria-hidden="true">
+                                <img class="teeby-header-img teeby-header-img--light" src="{{ url_for('static', filename='img/teeby-header-light.jpg') }}" alt="" width="84" height="84" loading="lazy" decoding="async">
+                                <img class="teeby-header-img teeby-header-img--dark" src="{{ url_for('static', filename='img/teeby-header-dark.jpg') }}" alt="" width="84" height="84" loading="lazy" decoding="async">
+                            </span>
+                            <span>Meet Teeby — your AI Portfolio Assistant</span>
+                        </h5>
                         <div class="btn-group" role="group">
                             <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="collapse" data-bs-target="#aiChatCollapse">
                                 <i class="fas fa-comments"></i> Chat
@@ -285,9 +291,12 @@
                             <div id="aiChatMessages" class="chat-messages">
                                 <div class="message ai-message">
                                     <div class="message-content">
-                                        <i class="fas fa-robot"></i>
+                                        <span class="teeby-chat-avatar-wrap" aria-hidden="true">
+                                            <img class="teeby-chat-img teeby-chat-img--light" src="{{ url_for('static', filename='img/teeby-chat-light.jpg') }}" alt="" width="84" height="84" loading="lazy" decoding="async">
+                                            <img class="teeby-chat-img teeby-chat-img--dark" src="{{ url_for('static', filename='img/teeby-chat-dark.jpg') }}" alt="" width="84" height="84" loading="lazy" decoding="async">
+                                        </span>
                                         <div class="message-text">
-                                            Hello! I'm your AI Portfolio Advisor. I can analyze your portfolio performance, provide insights on your trading strategy, and suggest improvements. 
+                                            Hi! I'm <strong>Teeby</strong>, your AI portfolio assistant. I can analyze your portfolio performance, share insights on your trading strategy, and suggest improvements. 
                                             <br><br>
                                             Try asking me questions like:
                                             <ul>
@@ -360,6 +369,12 @@
     {% endif %}
 
     <!-- Scripts -->
+    <script>
+        window.TEEBY_CHAT_AVATAR_LIGHT_URL = {{ url_for('static', filename='img/teeby-chat-light.jpg')|tojson }};
+        window.TEEBY_CHAT_AVATAR_DARK_URL = {{ url_for('static', filename='img/teeby-chat-dark.jpg')|tojson }};
+        window.TEEBY_HEADER_AVATAR_LIGHT_URL = {{ url_for('static', filename='img/teeby-header-light.jpg')|tojson }};
+        window.TEEBY_HEADER_AVATAR_DARK_URL = {{ url_for('static', filename='img/teeby-header-dark.jpg')|tojson }};
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}?v={{ range(1000, 9999) | random }}"></script>

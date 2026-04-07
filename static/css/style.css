@@ -573,6 +573,88 @@ small {
     flex-shrink: 0;
 }
 
+/* Teeby chat avatars: two assets; visibility toggled by html[data-theme] */
+.teeby-chat-avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+    width: 84px;
+    height: 84px;
+    margin-top: 2px;
+}
+
+.teeby-chat-avatar-wrap--sm {
+    width: 62px;
+    height: 62px;
+    margin-top: 0;
+}
+
+.teeby-chat-img {
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    object-fit: contain;
+    object-position: center center;
+    display: none;
+    border: none;
+    box-shadow: none;
+    vertical-align: top;
+}
+
+.teeby-chat-avatar-wrap--sm .teeby-chat-img {
+    width: 84px;
+    height: 84px;
+}
+
+html[data-theme="light"] .teeby-chat-img--light,
+html[data-theme="dark"] .teeby-chat-img--dark {
+    display: block;
+}
+
+html:not([data-theme]) .teeby-chat-img--light,
+html[data-theme=""] .teeby-chat-img--light {
+    display: block;
+}
+
+/* Meet Teeby card header: copy assets tuned for header gradient */
+.teeby-header-avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+    width: 84px;
+    height: 84px;
+    margin-right: 10px;
+}
+
+.teeby-header-img {
+    width: 84px;
+    height: 84px;
+    max-width: none;
+    border-radius: 50%;
+    object-fit: contain;
+    object-position: center center;
+    display: none;
+    border: none;
+    box-shadow: none;
+    vertical-align: top;
+    flex-shrink: 0;
+}
+
+/* Scoped so Bootstrap’s global img { max-width:100%; height:auto } can’t shrink the header avatar */
+#aiAdvisorCard .card-header .teeby-header-img {
+    width: 84px;
+    height: 84px;
+    max-width: none;
+}
+
+html[data-theme="light"] .teeby-header-img--light,
+html[data-theme="dark"] .teeby-header-img--dark {
+    display: block;
+}
+
+html:not([data-theme]) .teeby-header-img--light,
+html[data-theme=""] .teeby-header-img--light {
+    display: block;
+}
+
 .message-text {
     background-color: white;
     padding: 12px 16px;
@@ -679,10 +761,6 @@ small {
     margin-bottom: 15px;
 }
 
-.ai-typing i {
-    color: #667eea;
-}
-
 .typing-dots {
     display: flex;
     gap: 3px;
@@ -713,10 +791,6 @@ small {
 /* AI Advisor Card Specific Styles */
 #aiAdvisorCard .card-header {
     background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-}
-
-#aiAdvisorCard .card-header h5 i {
-    margin-right: 8px;
 }
 
 /* Responsive chat styles */

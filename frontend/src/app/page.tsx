@@ -34,9 +34,9 @@ const tradeSphereScript = Dancing_Script({
     weight: ["600", "700"],
 });
 
-/** Dark mode: same fire gradient + shadow as “Trading Made Simple”. */
-const tradeSphereDarkWordmark =
-    "bg-[linear-gradient(90deg,#ff0000,#ff6600,#ffcc00,#ff3300,#ff0000)] bg-clip-text text-transparent drop-shadow-[0_1px_12px_rgba(0,0,0,0.85)]";
+/** Logo palette: forest → emerald → lime (same in light & dark). */
+const tradeSphereBrandWordmark =
+    "bg-[linear-gradient(105deg,#1B4F32,#2ECC71,#ADFF2F,#D4EF22,#2ECC71,#1B4F32)] bg-clip-text text-transparent drop-shadow-[0_0_28px_rgba(46,204,113,0.45)]";
 
 const MainPage = () => {
     const { theme } = useTradeSphereTheme();
@@ -74,11 +74,11 @@ const MainPage = () => {
         theme === "dark"
             ? {
                   background:
-                      "linear-gradient(black, black) padding-box, linear-gradient(90deg, #fbbf24, #f87171, #fcd34d) border-box",
+                      "linear-gradient(black, black) padding-box, linear-gradient(90deg, #1B4F32, #2ECC71, #ADFF2F, #D4EF22) border-box",
               }
             : {
                   background:
-                      "linear-gradient(#ffffff, #ffffff) padding-box, linear-gradient(90deg, #0284c7, #4f46e5, #0ea5e9) border-box",
+                      "linear-gradient(#ffffff, #ffffff) padding-box, linear-gradient(90deg, #1B4F32, #2ECC71, #ADFF2F, #D4EF22) border-box",
               };
 
     const shellBg = showTradingPlatform
@@ -123,20 +123,12 @@ const MainPage = () => {
                     >
                         <div className="mb-8 w-full text-center">
                             <h1
-                                className={`mb-3 text-6xl leading-none sm:mb-4 sm:text-7xl md:mb-5 md:text-7xl lg:text-8xl ${tradeSphereScript.className} ${
-                                    theme === "dark"
-                                        ? tradeSphereDarkWordmark
-                                        : "text-white"
-                                }`}
+                                className={`mb-3 text-6xl leading-none sm:mb-4 sm:text-7xl md:mb-5 md:text-7xl lg:text-8xl ${tradeSphereScript.className} ${tradeSphereBrandWordmark}`}
                             >
                                 TradeSphere
                             </h1>
                             <p
-                                className={`${wallStreetTagline.className} mb-6 text-xl font-semibold italic leading-snug tracking-[0.06em] sm:text-2xl ${
-                                    theme === "dark"
-                                        ? "shimmer-text"
-                                        : "shimmer-text-light"
-                                }`}
+                                className={`${wallStreetTagline.className} tradesphere-brand-shimmer mb-6 text-xl font-semibold italic leading-snug tracking-[0.06em] sm:text-2xl`}
                             >
                                 Become your own Hedge Fund
                             </p>
@@ -145,8 +137,8 @@ const MainPage = () => {
                                 onClick={handleLaunchPlatform}
                                 className={`${wallStreetTagline.className} execute-trades-btn rounded-full border-2 border-transparent px-10 py-3.5 text-lg font-semibold italic tracking-[0.06em] transition-all duration-200 ${
                                     theme === "dark"
-                                        ? "text-white shadow-lg shadow-black/45 hover:shadow-xl hover:shadow-black/65"
-                                        : "text-slate-900 shadow-lg shadow-sky-300/80 hover:shadow-xl hover:shadow-indigo-200/70"
+                                        ? "text-white shadow-lg shadow-emerald-900/40 hover:shadow-xl hover:shadow-emerald-500/25"
+                                        : "text-emerald-950 shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:shadow-lime-400/25"
                                 }`}
                                 style={executeBtnStyle}
                             >
@@ -164,7 +156,7 @@ const MainPage = () => {
                                 key={animationKey}
                                 segments={mainDemoSyntaxSegments}
                                 className={`ts-syntax-typing text-left font-mono text-sm md:text-base ${theme === "dark" ? "text-slate-200" : "text-zinc-800"}`}
-                                duration={100}
+                                duration={140}
                             />
                         </div>
                     </div>
@@ -180,28 +172,16 @@ const MainPage = () => {
                         <div className="mx-auto w-full max-w-3xl px-2">
                             <div className="flex items-center gap-4 sm:gap-6">
                                 <div
-                                    className={`h-px min-w-[2rem] flex-1 ${
-                                        theme === "dark"
-                                            ? "bg-gradient-to-r from-transparent via-amber-500/45 to-zinc-600/40"
-                                            : "bg-gradient-to-r from-transparent via-amber-200/70 to-white/35"
-                                    }`}
+                                    className="h-px min-w-[2rem] flex-1 bg-gradient-to-r from-transparent via-emerald-400/50 to-lime-300/35"
                                     aria-hidden
                                 />
                                 <p
-                                    className={`${wallStreetTagline.className} shrink-0 text-center text-xl font-semibold italic leading-snug tracking-[0.06em] text-transparent sm:text-2xl md:text-3xl ${
-                                        theme === "dark"
-                                            ? "bg-[linear-gradient(90deg,#ff0000,#ff6600,#ffcc00,#ff3300,#ff0000)] bg-clip-text drop-shadow-[0_1px_12px_rgba(0,0,0,0.85)]"
-                                            : "bg-[linear-gradient(90deg,#fff7ed,#fdba74,#fb923c,#fcd34d,#fff7ed)] bg-clip-text"
-                                    }`}
+                                    className={`${wallStreetTagline.className} shrink-0 text-center text-xl font-semibold italic leading-snug tracking-[0.06em] text-white sm:text-2xl md:text-3xl`}
                                 >
                                     Trading Made Simple
                                 </p>
                                 <div
-                                    className={`h-px min-w-[2rem] flex-1 ${
-                                        theme === "dark"
-                                            ? "bg-gradient-to-l from-transparent via-amber-500/45 to-zinc-600/40"
-                                            : "bg-gradient-to-l from-transparent via-amber-200/70 to-white/35"
-                                    }`}
+                                    className="h-px min-w-[2rem] flex-1 bg-gradient-to-l from-transparent via-emerald-400/50 to-lime-300/35"
                                     aria-hidden
                                 />
                             </div>
@@ -243,11 +223,7 @@ const MainPage = () => {
                                 <span>Back to main page</span>
                             </button>
                             <h2
-                                className={`text-2xl sm:text-3xl ${tradeSphereScript.className} ${
-                                    theme === "dark"
-                                        ? tradeSphereDarkWordmark
-                                        : "bg-gradient-to-r from-sky-700 via-blue-700 to-indigo-700 bg-clip-text text-transparent"
-                                }`}
+                                className={`text-2xl sm:text-3xl ${tradeSphereScript.className} ${tradeSphereBrandWordmark}`}
                             >
                                 TradeSphere
                             </h2>

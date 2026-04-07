@@ -161,48 +161,41 @@
   }
 }
 
-/* Shimmer: animated gradient clipped to text (inherit color would hide it) */
-.shimmer-text {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  background-image: linear-gradient(
-    90deg,
-    #ff0000,
-    #ff6600,
-    #ffcc00,
-    #ff3300,
-    #ff0000
-  );
-  background-size: 520% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  animation:
-    flame 3.1s linear infinite,
-    shimmer-glow 2.2s ease-in-out infinite;
-}
-
-/* Same motion as .shimmer-text; palette matches light-mode hero/slogan gradients */
+/* TradeSphere brand: forest → emerald → lime (logo), same in light/dark */
+.tradesphere-brand-shimmer,
+.shimmer-text,
 .shimmer-text-light {
   color: transparent;
   -webkit-text-fill-color: transparent;
   background-image: linear-gradient(
     90deg,
-    #fff7ed,
-    #fdba74,
-    #fb923c,
-    #fcd34d,
-    #fff7ed,
-    #fdba74,
-    #fb923c,
-    #fcd34d,
-    #fff7ed
+    #1b4f32,
+    #2ecc71,
+    #adff2f,
+    #d4ef22,
+    #2ecc71,
+    #1b4f32,
+    #adff2f,
+    #d4ef22,
+    #1b4f32
   );
   background-size: 520% 100%;
   background-clip: text;
   -webkit-background-clip: text;
+}
+
+.shimmer-text,
+.shimmer-text-light {
   animation:
     flame 3.1s linear infinite,
     shimmer-glow 2.2s ease-in-out infinite;
+}
+
+/* Landing tagline — same gradient, slightly slower pulse */
+.tradesphere-brand-shimmer {
+  animation:
+    flame 4.8s linear infinite,
+    shimmer-glow 3.4s ease-in-out infinite;
 }
 
 /* Main page code demo: neutral tokens tuned for light backgrounds */
@@ -240,20 +233,22 @@ html:not(.dark) .ts-syntax-typing .text-sky-400 {
 
 .dark .execute-trades-btn:hover {
   transform: translateY(-2px);
+  color: #fff !important;
   box-shadow:
-    0 0 20px rgba(251, 191, 36, 0.6),
-    0 0 40px rgba(248, 113, 113, 0.4),
-    0 0 60px rgba(252, 211, 77, 0.3);
-  background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    0 0 20px rgba(46, 204, 113, 0.45),
+    0 0 42px rgba(173, 255, 47, 0.28),
+    0 0 60px rgba(27, 79, 50, 0.35);
+  background: linear-gradient(135deg, #1b4f32 0%, #2ecc71 45%, #adff2f 100%);
 }
 
 html:not(.dark) .execute-trades-btn:hover {
   transform: translateY(-2px);
+  color: #fff !important;
   box-shadow:
-    0 0 22px rgba(3, 105, 161, 0.5),
-    0 0 42px rgba(67, 56, 202, 0.38),
-    0 0 58px rgba(2, 132, 199, 0.28);
-  background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+    0 0 22px rgba(46, 204, 113, 0.4),
+    0 0 42px rgba(173, 255, 47, 0.25),
+    0 0 58px rgba(27, 79, 50, 0.2);
+  background: linear-gradient(135deg, #1b4f32 0%, #2ecc71 45%, #adff2f 100%);
 }
 
 .execute-trades-btn::before {
