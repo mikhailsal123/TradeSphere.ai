@@ -7,3 +7,6 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # URL of the Flask Web Service (not this Next.js URL). Required so the intro page can load the iframe after "Execute Trades".
+      - key: NEXT_PUBLIC_FLASK_BACKEND_URL
+        sync: false

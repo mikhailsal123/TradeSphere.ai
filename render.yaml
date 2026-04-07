@@ -5,9 +5,12 @@ services:
     buildCommand: |
       pip install --upgrade pip setuptools wheel
       pip install --only-binary=all -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn flask_backend:app
     envVars:
       - key: FLASK_ENV
         value: production
       - key: PORT
         value: 10000
+      # Optional: your Next.js site URL so direct visits to the backend show a "Go to intro" link.
+      - key: SHELL_SITE_URL
+        sync: false

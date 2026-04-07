@@ -3,12 +3,12 @@
     "version": "0.1.0",
     "private": true,
     "scripts": {
-        "dev": "next dev --turbopack",
+        "dev": "concurrently -k -n next,flask -c cyan,magenta \"npm run dev:next\" \"npm run dev:flask\"",
+        "dev:next": "next dev --turbopack",
+        "dev:flask": "npm run backend:dev --prefix ..",
         "build": "next build",
         "start": "next start",
-        "lint": "eslint",
-        "export": "next build && next export",
-        "deploy": "npm run build && touch out/.nojekyll && git add out/ && git commit -m 'Deploy to GitHub Pages' && git subtree push --prefix out origin gh-pages"
+        "lint": "eslint"
     },
     "dependencies": {
         "@auth0/nextjs-auth0": "^4.10.0",
@@ -26,6 +26,7 @@
         "autoprefixer": "^10.4.16"
     },
     "devDependencies": {
+        "concurrently": "^8.2.2",
         "@eslint/eslintrc": "^3",
         "@types/node": "^20",
         "@types/react": "^19",

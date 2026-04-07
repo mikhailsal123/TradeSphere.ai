@@ -11,9 +11,20 @@ A sophisticated portfolio simulation and trading platform with AI-powered insigh
 - **Risk Management**: Beta hedging and portfolio optimization
 - **Interactive Charts**: Visualize performance and trends
 
-## Live Demo
+## Deployment (Render + GitHub)
 
-🌐 **[View Live Demo](https://your-username.github.io/PennApps-Project/)**
+Use **two** Render Web Services from the same GitHub repo (different names, different URLs):
+
+1. **Flask backend** — `render.yaml` (`gunicorn flask_backend:app`). Serves the trading UI only when opened with `?embed=1` or inside an iframe, so people who open the backend URL directly see a short notice instead of skipping the intro.
+2. **Next.js frontend** — `render-frontend.yaml` (`npm run build` / `npm start` in `frontend/`). This is the URL you share with users: **intro first**, then **Execute Trades** loads the Flask app in an iframe.
+
+**Required on the Next.js service:** set `NEXT_PUBLIC_FLASK_BACKEND_URL` to the **Flask** service URL (no trailing slash), then trigger a new deploy so the client bundle picks it up.
+
+**Optional on the Flask service:** set `SHELL_SITE_URL` to your **Next.js** URL so the backend’s stub page includes a “Go to intro” button.
+
+Local production build: `./set_next_iframe_backend_url.sh https://your-flask.onrender.com` then `cd frontend && npm run build`.
+
+Helper checklists: `./render_backend_setup_hints.sh` and `./render_frontend_setup_hints.sh`.
 
 ## Local Development
 
@@ -30,8 +41,10 @@ pip install -r requirements.txt
 export CEREBRAS_TOKEN="your-cerebras-token-here"
 
 # Run the Flask server
-python app.py
+python3 flask_backend.py
 ```
+
+Optional: run the standalone terminal portfolio demo with `python3 portfolio_simulation_demo.py`. For how the Next shell and Flask app connect, see `ARCHITECTURE_AND_LOCAL_DEV.md`.
 
 ### Frontend Setup
 ```bash
@@ -41,17 +54,27 @@ cd frontend
 # Install dependencies
 npm install
 
-# Run development server
+# Starts Next.js and Flask together (Flask on 127.0.0.1:5002)
 npm run dev
 ```
 
+From the **repository root**, the same thing:
+
+```bash
+npm install
+npm run dev
+```
+
+Next.js-only (you must start Flask yourself, e.g. `npm run backend:dev` from the repo root): `npm run dev:next` inside `frontend/`.
+
+If Flask runs on another host/port locally, set `NEXT_PUBLIC_FLASK_DEV_URL` in `frontend/.env.development.local` (only used when `next dev` is running).
+
 ## Technology Stack
 
-- **Backend**: Python Flask, yfinance, pandas
-- **Frontend**: HTML5, CSS3, JavaScript, Bootstrap 5
-- **AI**: Cerebras API for portfolio analysis
-- **Charts**: Chart.js for data visualization
-- **Styling**: Inter font, modern CSS with gradients
+- **Backend**: Python Flask, yfinance, pandas; trading UI in Jinja templates + `static/`
+- **Main page shell**: Next.js (React) in `frontend/`, embeds the Flask app in an iframe
+- **AI**: Cerebras API for portfolio analysis (optional)
+- **Charts**: Chart.js in the Flask UI; matplotlib on the server where used
 
 ## API Endpoints
 

@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-    output: 'export',
+    // Use the Next.js server (`next start`) on Render — not static export, which breaks `next start`.
     trailingSlash: true,
     images: {
         unoptimized: true

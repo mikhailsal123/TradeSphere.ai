@@ -1,9 +1,10 @@
 from flask import Flask, render_template, jsonify, request
 from Portfolio import Portfolio
 from StockData import StockData
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dateutil.relativedelta import relativedelta
 import json
+import random
 import time
 import threading
 import uuid
@@ -16,27 +17,23 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 
-# Configure yfinance with proper headers to avoid IP blocking
 import yfinance as yf
 
-# Set up a session with proper browser headers
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-})
-
-# Configure yfinance to use our session
+# Do not pass requests.Session() into yfinance — current Yahoo backends expect curl_cffi or default handling.
 yf.set_tz_cache_location("/tmp/yfinance_cache")
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+
+
+@app.after_request
+def _allow_next_iframe_embed(response):
+    """Next.js runs on another origin/port; allow embedding when we serve the trading UI in an iframe."""
+    if request.args.get("embed") == "1" or request.headers.get("Sec-Fetch-Dest") == "iframe":
+        response.headers.pop("X-Frame-Options", None)
+    return response
 
 # Store active simulations
 active_simulations = {}
@@ -48,6 +45,8 @@ current_portfolio_state = {
     'initial_cash': None,
     'start_date': None,
     'duration_days': None,
+    'duration_hours': None,
+    'trading_frequency': None,
     'tickers': {},
     'trading_rules': [],
     'final_metrics': {},
@@ -74,6 +73,8 @@ def update_portfolio_state(simulation_id, simulation_data):
             'initial_cash': simulation.initial_cash,
             'start_date': simulation.start_date,
             'duration_days': simulation.duration_days,
+            'duration_hours': getattr(simulation, 'duration_hours', None),
+            'trading_frequency': simulation.trading_frequency,
             'tickers': simulation.tickers,
             'trading_rules': simulation.trading_rules,
             'final_metrics': getattr(simulation, 'final_metrics', {}),
@@ -172,7 +173,8 @@ In the meantime, you can still analyze your portfolio manually using the perform
                     'initial_cash': current_portfolio_state['initial_cash'],
                     'start_date': current_portfolio_state['start_date'],
                     'duration_days': current_portfolio_state['duration_days'],
-                    'trading_frequency': 'daily',
+                    'duration_hours': current_portfolio_state.get('duration_hours'),
+                    'trading_frequency': current_portfolio_state.get('trading_frequency') or 'daily',
                     'tickers': current_portfolio_state['tickers'],
                     'trading_rules': current_portfolio_state['trading_rules']
                 }
@@ -422,7 +424,14 @@ Please provide a focused analysis that directly addresses their question. Be spe
             context += f"SIMULATION PARAMETERS:\n"
             context += f"- Initial Cash: ${simulation_data.get('initial_cash', 'N/A')}\n"
             context += f"- Start Date: {simulation_data.get('start_date', 'N/A')}\n"
-            context += f"- Duration: {simulation_data.get('duration_days', 'N/A')} days\n"
+            dd = simulation_data.get('duration_days')
+            dh = simulation_data.get('duration_hours')
+            if dh is not None:
+                context += f"- Duration: {dh} hours (intraday span)\n"
+            elif dd is not None:
+                context += f"- Duration: {dd} days\n"
+            else:
+                context += "- Duration: N/A\n"
             context += f"- Trading Frequency: {simulation_data.get('trading_frequency', 'N/A')}\n"
             context += f"- Initial Tickers: {simulation_data.get('tickers', {})}\n"
             context += f"- Trading Rules: {simulation_data.get('trading_rules', {})}\n\n"
@@ -509,11 +518,12 @@ Please provide a focused analysis that directly addresses their question. Be spe
 advisor = AIAdvisor()
 
 class SimulationManager:
-    def __init__(self, simulation_id, initial_cash, start_date, duration_days, trading_frequency, tickers, trading_rules, beta_hedge_enabled=False):
+    def __init__(self, simulation_id, initial_cash, start_date, duration_days, trading_frequency, tickers, trading_rules, beta_hedge_enabled=False, duration_hours=None):
         self.simulation_id = simulation_id
         self.initial_cash = initial_cash
         self.start_date = start_date
         self.duration_days = duration_days
+        self.duration_hours = duration_hours
         self.trading_frequency = trading_frequency  # 'daily' or 'intraday'
         self.tickers = tickers
         self.trading_rules = trading_rules
@@ -522,6 +532,7 @@ class SimulationManager:
         self.is_running = False
         self.is_complete = False
         self.thread = None
+        self.total_result_steps = 1
         
     def run_simulation(self):
         """Run the portfolio simulation"""
@@ -529,6 +540,10 @@ class SimulationManager:
             self.is_running = True
             print(f"DEBUG: Starting simulation with trading rules: {self.trading_rules}")
             print(f"DEBUG: Number of trading rule groups: {len(self.trading_rules)}")
+            
+            freq = self.trading_frequency
+            bar_minutes_map = {'1m': 1, '5m': 5, '15m': 15, '60m': 60, 'intraday': 60}
+            is_intraday = freq in bar_minutes_map
             
             # Initialize portfolio and stock data
             currtime = datetime.strptime(self.start_date, '%Y-%m-%d')
@@ -538,22 +553,53 @@ class SimulationManager:
                 currtime += timedelta(days=1)
                 print(f"Start date was weekend, moving to {currtime.strftime('%Y-%m-%d')}")
             
-            # For intraday simulations, start at market open (9:30 AM)
-            if self.trading_frequency == 'intraday':
+            if is_intraday:
                 currtime = currtime.replace(hour=9, minute=30, second=0, microsecond=0)
             
             start_date_str = currtime.strftime('%Y-%m-%d')
-            end_date_str = (currtime + timedelta(days=self.duration_days + 30)).strftime('%Y-%m-%d')
+            today_d = date.today()
+            today_dt = datetime(today_d.year, today_d.month, today_d.day)
+            dh = getattr(self, 'duration_hours', None)
+            if is_intraday:
+                if dh is not None and freq in ('1m', '5m', '15m'):
+                    pad_days = max(21, min(90, int(dh) * 4 + 20))
+                elif freq == '60m':
+                    pad_days = max(21, int(self.duration_days) * 12 + 21)
+                else:
+                    pad_days = max(30, int(self.duration_days) * 14 + 30)
+            else:
+                pad_days = int(self.duration_days) + 35
+            end_candidate = currtime + timedelta(days=pad_days)
+            end_dt = max(end_candidate, today_dt)
+            end_date_str = end_dt.strftime('%Y-%m-%d')
             
             port = Portfolio(self.initial_cash, start_date_str, end_date_str)
             
             # Initialize stock data with appropriate interval
             data = {}
-            interval = '60m' if self.trading_frequency == 'intraday' else '1d'
+            if is_intraday:
+                bar_m = bar_minutes_map[freq]
+                yf_interval = f'{bar_m}m' if bar_m < 60 else '60m'
+                if dh is not None and freq in ('1m', '5m', '15m'):
+                    cap = {'1m': 6, '5m': 12, '15m': 24}[freq]
+                    h = max(1, min(cap, int(round(float(dh)))))
+                    bars_per_hour = max(1, 60 // bar_m)
+                    total_intervals = max(1, h * bars_per_hour)
+                else:
+                    bars_per_day = max(1, (6 * 60) // bar_m)
+                    d = max(1, min(7, int(self.duration_days))) if freq == '60m' else int(self.duration_days)
+                    total_intervals = max(1, d * bars_per_day)
+                interval_delta = timedelta(minutes=bar_m)
+            else:
+                yf_interval = '1d'
+                total_intervals = self.duration_days
+                interval_delta = timedelta(days=1)
+            
+            self.total_result_steps = total_intervals + 1
+            
             for ticker in self.tickers.keys():
                 data[ticker] = StockData(ticker, start_date_str, end_date_str)
-                # Update the stock data with the correct interval
-                data[ticker].get_stock_data(ticker, start_date_str, end_date_str, interval)
+                data[ticker].get_stock_data(ticker, start_date_str, end_date_str, yf_interval)
             
             # Initial purchases with real market prices using the same stock data objects
             print(f"Starting with cash: ${port.cash:,.2f}")
@@ -582,16 +628,25 @@ class SimulationManager:
             print(f"Final cash after all purchases: ${port.cash:,.2f}")
             print(f"Final positions after all purchases: {port.positions}")
             
+            first_bars = [data[t].stock_data.index[0] for t in self.tickers if not data[t].stock_data.empty]
+            if first_bars:
+                currtime = min(first_bars)
+                if is_intraday:
+                    currtime = currtime.replace(hour=9, minute=30, second=0, microsecond=0)
+                for t in self.tickers:
+                    if not data[t].stock_data.empty:
+                        data[t].curtime = currtime
+            
             # Calculate portfolio value right after initial purchases
             initial_portfolio_value = port.get_value(currtime)
             print(f"Portfolio value after initial purchases: ${initial_portfolio_value:,.2f}")
             
             # Record initial state (after purchases) as first result
-            initial_interval_label = 'Day 0 (Initial)' if self.trading_frequency == 'daily' else 'Day 0, Initial'
+            initial_interval_label = 'Day 0 (Initial)' if not is_intraday else 'Day 0, Initial'
             initial_result = {
                 'day': 0,
                 'interval_label': initial_interval_label,
-                'date': currtime.strftime('%Y-%m-%d %H:%M') if self.trading_frequency == 'intraday' else currtime.strftime('%Y-%m-%d'),
+                'date': currtime.strftime('%Y-%m-%d %H:%M') if is_intraday else currtime.strftime('%Y-%m-%d'),
                 'prices': {ticker: data[ticker].get_price() for ticker in self.tickers.keys() if data[ticker].get_price() is not None},
                 'portfolio_value': initial_portfolio_value,
                 'trades': [],
@@ -601,16 +656,6 @@ class SimulationManager:
             }
             self.results.append(initial_result)
             print(f"Recorded initial result: positions={port.positions}, value=${initial_portfolio_value:,.2f}")
-            
-            # Run simulation based on trading frequency
-            if self.trading_frequency == 'intraday':
-                # For intraday: simulate 60-minute intervals within each day
-                total_intervals = self.duration_days * 6  # 6 intervals per day (6 hours / 60 min)
-                interval_delta = timedelta(hours=1)
-            else:
-                # For daily: simulate day by day
-                total_intervals = self.duration_days
-                interval_delta = timedelta(days=1)
             
             for i in range(total_intervals):
                 if not self.is_running:  # Check if simulation was stopped
@@ -642,8 +687,7 @@ class SimulationManager:
                         # Fetch real stock data for trading rule tickers
                         try:
                             temp_data = StockData(ticker, start_date_str, end_date_str)
-                            interval = '60m' if self.trading_frequency == 'intraday' else '1d'
-                            temp_data.get_stock_data(ticker, start_date_str, end_date_str, interval)
+                            temp_data.get_stock_data(ticker, start_date_str, end_date_str, yf_interval)
                             temp_data.curtime = currtime
                             price = temp_data.get_price()
                             if price is not None:
@@ -748,19 +792,18 @@ class SimulationManager:
                 current_value = port.get_value(currtime)
                 
                 # Store interval result with meaningful labels
-                if self.trading_frequency == 'daily':
+                if not is_intraday:
                     interval_label = f"Day {i + 1}"
-                else:  # intraday
-                    day_num = (i // 6) + 1
-                    interval_in_day = (i % 6) + 1
-                    # Format as "Day X, Interval Y" with time
+                else:
+                    bpd = max(1, (6 * 60) // bar_minutes_map[freq])
+                    day_num = (i // bpd) + 1
                     time_str = currtime.strftime('%H:%M')
                     interval_label = f"Day {day_num}, {time_str}"
                 
                 daily_result = {
                     'day': i + 1,
                     'interval_label': interval_label,
-                    'date': currtime.strftime('%Y-%m-%d %H:%M') if self.trading_frequency == 'intraday' else currtime.strftime('%Y-%m-%d'),
+                    'date': currtime.strftime('%Y-%m-%d %H:%M') if is_intraday else currtime.strftime('%Y-%m-%d'),
                     'prices': current_prices.copy(),
                     'portfolio_value': current_value,
                     'trades': trades_executed.copy(),
@@ -1241,44 +1284,79 @@ class SimulationManager:
             traceback.print_exc()
             return []
 
+def _serve_trading_ui_in_browser():
+    """Full trading UI: only when embedded from Next.js or explicitly requested (see README)."""
+    if request.args.get('embed') == '1':
+        return True
+    if request.headers.get('Sec-Fetch-Dest') == 'iframe':
+        return True
+    return False
+
+
 @app.route('/')
 def index():
-    """Main page"""
-    return render_template('index.html')
+    """Trading UI for iframe/embed; intro lives on the Next.js service."""
+    if _serve_trading_ui_in_browser():
+        t = request.args.get('theme', 'dark')
+        if t not in ('light', 'dark'):
+            t = 'dark'
+        embed = request.args.get('embed') == '1'
+        return render_template('index.html', theme=t, embed=embed)
+    shell_url = (os.getenv('SHELL_SITE_URL') or os.getenv('NEXT_PUBLIC_SHELL_URL') or '').strip()
+    return render_template('shell_entry_notice.html', shell_url=shell_url)
 
 @app.route('/validate_ticker/<ticker>')
 def validate_ticker(ticker):
-    """Validate if a ticker symbol exists in Yahoo Finance"""
+    """Validate ticker via Yahoo; .info is often empty, so we fall back to OHLCV history."""
+    sym = (ticker or '').strip().upper()
+    if not sym or len(sym) > 32:
+        return jsonify({'valid': False, 'ticker': sym, 'error': 'Invalid ticker'}), 400
+
     try:
-        # Try to fetch basic info for the ticker using configured session
-        stock = yf.Ticker(ticker.upper(), session=session)
-        info = stock.info
-        
-        # Check if we got valid data (not empty dict)
-        if info and len(info) > 1:  # More than just basic metadata
-            # Check if it has essential fields that indicate a valid stock
-            if 'symbol' in info or 'shortName' in info or 'longName' in info:
-                return jsonify({
-                    'valid': True,
-                    'ticker': ticker.upper(),
-                    'name': info.get('shortName', info.get('longName', ticker.upper())),
-                    'exchange': info.get('exchange', 'Unknown'),
-                    'source': 'yfinance_with_headers'
-                })
-        
-        # If we get here, the ticker is not valid
-        return jsonify({
-            'valid': False,
-            'ticker': ticker.upper(),
-            'error': 'Ticker not found in Yahoo Finance database'
-        })
-        
+        stock = yf.Ticker(sym)
+        try:
+            raw_info = stock.info
+            info = raw_info if isinstance(raw_info, dict) else {}
+        except Exception:
+            info = {}
+
+        def ok(name, exchange, source):
+            return jsonify({
+                'valid': True,
+                'ticker': sym,
+                'name': name or sym,
+                'exchange': exchange or 'Unknown',
+                'source': source,
+            })
+
+        if info and any(
+            k in info for k in (
+                'symbol', 'shortName', 'longName', 'regularMarketPrice',
+                'currentPrice', 'bid', 'ask', 'previousClose',
+            )
+        ):
+            return ok(
+                info.get('shortName') or info.get('longName') or sym,
+                info.get('exchange'),
+                'yfinance_info',
+            )
+
+        for _ in range(4):
+            try:
+                hist = stock.history(period='3mo', auto_adjust=False)
+                if hist is not None and not hist.empty:
+                    return ok(
+                        info.get('shortName') or info.get('longName') or sym,
+                        info.get('exchange'),
+                        'yfinance_history',
+                    )
+            except Exception:
+                pass
+            time.sleep(random.uniform(0.2, 0.55))
+
+        return jsonify({'valid': False, 'ticker': sym, 'error': 'Ticker not found'})
     except Exception as e:
-        return jsonify({
-            'valid': False,
-            'ticker': ticker.upper(),
-            'error': f'Error validating ticker: {str(e)}'
-        })
+        return jsonify({'valid': False, 'ticker': sym, 'error': str(e)})
 
 @app.route('/start_simulation', methods=['POST'])
 def start_simulation():
@@ -1290,10 +1368,43 @@ def start_simulation():
         simulation_id = str(uuid.uuid4())
         
         # Extract parameters
-        initial_cash = float(data.get('initial_cash', 100000))
-        start_date = data.get('start_date', '2025-07-21')
+        initial_cash = float(data.get('initial_cash', 110000))
         duration_days = int(data.get('duration_days', 30))
+        raw_h = data.get('duration_hours')
+        duration_hours = None
+        if raw_h is not None and raw_h != '':
+            try:
+                duration_hours = float(raw_h)
+            except (TypeError, ValueError):
+                duration_hours = None
         trading_frequency = data.get('trading_frequency', 'daily')
+
+        if trading_frequency in ('1m', '5m', '15m'):
+            cap = {'1m': 6, '5m': 12, '15m': 24}[trading_frequency]
+            if duration_hours is None:
+                duration_hours = float(min(cap, max(1, duration_days)))
+            duration_hours = float(max(1, min(cap, int(round(duration_hours)))))
+            duration_days = 1
+        elif trading_frequency == '60m':
+            duration_hours = None
+            duration_days = max(1, min(7, duration_days))
+        else:
+            duration_hours = None
+            duration_days = max(1, min(365, duration_days))
+
+        start_date = data.get('start_date')
+        if start_date:
+            start_date = str(start_date).strip()[:10]
+        else:
+            if trading_frequency == 'daily':
+                lookback = min(duration_days + 7, 400)
+            elif trading_frequency == '60m':
+                lookback = max(14, min(60, duration_days * 10 + 14))
+            elif trading_frequency in ('1m', '5m', '15m'):
+                lookback = max(14, min(60, int(duration_hours or 1) * 2 + 20))
+            else:
+                lookback = 30
+            start_date = (date.today() - timedelta(days=lookback)).strftime('%Y-%m-%d')
         
         # Extract tickers and shares
         tickers = {}
@@ -1332,8 +1443,9 @@ def start_simulation():
         print(f"DEBUG: About to create SimulationManager with trading_rules: {trading_rules}")
         beta_hedge_enabled = data.get('beta_hedge_enabled', False)
         simulation = SimulationManager(
-            simulation_id, initial_cash, start_date, duration_days, 
-            trading_frequency, tickers, trading_rules, beta_hedge_enabled
+            simulation_id, initial_cash, start_date, duration_days,
+            trading_frequency, tickers, trading_rules, beta_hedge_enabled,
+            duration_hours=duration_hours,
         )
         
         print(f"DEBUG: SimulationManager created successfully")
@@ -1366,11 +1478,14 @@ def simulation_status(simulation_id):
     
     simulation = active_simulations[simulation_id]
     
+    total_steps = getattr(simulation, 'total_result_steps', None) or (simulation.duration_days + 1)
+    if total_steps <= 0:
+        total_steps = 1
     response = {
         'is_running': simulation.is_running,
         'is_complete': simulation.is_complete,
         'results': simulation.results,
-        'progress': len(simulation.results) / simulation.duration_days if simulation.duration_days > 0 else 0
+        'progress': min(1.0, len(simulation.results) / total_steps),
     }
     
     # Always include final_metrics if simulation is complete
@@ -1490,6 +1605,7 @@ def ai_analysis():
                 'initial_cash': simulation.initial_cash,
                 'start_date': simulation.start_date,
                 'duration_days': simulation.duration_days,
+                'duration_hours': getattr(simulation, 'duration_hours', None),
                 'trading_frequency': simulation.trading_frequency,
                 'tickers': simulation.tickers,
                 'trading_rules': simulation.trading_rules
@@ -1546,7 +1662,17 @@ def get_plot(simulation_id, plot_type):
         
         # Create a portfolio object and populate it with the actual simulation data
         currtime = datetime.strptime(simulation.start_date, '%Y-%m-%d')
-        end_date_str = (currtime + timedelta(days=simulation.duration_days + 30)).strftime('%Y-%m-%d')
+        today_d = date.today()
+        today_dt = datetime(today_d.year, today_d.month, today_d.day)
+        dh = getattr(simulation, 'duration_hours', None)
+        tf = simulation.trading_frequency
+        if dh is not None and tf in ('1m', '5m', '15m'):
+            pad = max(30, min(120, int(dh) * 5 + 30))
+        elif tf in ('1m', '5m', '15m', '60m', 'intraday'):
+            pad = max(30, simulation.duration_days * 15 + 30)
+        else:
+            pad = simulation.duration_days + 30
+        end_date_str = max(currtime + timedelta(days=pad), today_dt).strftime('%Y-%m-%d')
         
         port = Portfolio(simulation.initial_cash, simulation.start_date, end_date_str)
         
@@ -1610,6 +1736,7 @@ def get_current_plot(plot_type):
         }), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5002))
+    # FLASK_PORT wins so a stray shell PORT (e.g. from other tools) does not move the dev server off 5002.
+    port = int(os.environ.get('FLASK_PORT') or os.environ.get('PORT', 5002))
     debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(debug=debug, host='0.0.0.0', port=port)

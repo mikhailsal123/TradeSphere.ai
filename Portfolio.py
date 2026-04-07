@@ -21,7 +21,6 @@ class Portfolio:
         else:
             self.past_trades = []
         
-        self.cash = cash     # Starting cash
         self.original_value = cash  #keep track of original value fo the portfolio
         self.change_over_time = {}  # {timestamp: portfolio_value}
         

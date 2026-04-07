@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeSphere — Open the main site</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            font-family: Inter, system-ui, sans-serif; background: #0a0a0a; color: #e5e5e5;
+            padding: 1.5rem;
+        }
+        .card {
+            max-width: 28rem; text-align: center;
+            padding: 2rem; border-radius: 1rem;
+            border: 2px solid transparent;
+            background:
+                linear-gradient(#171717, #171717) padding-box,
+                linear-gradient(90deg, #fbbf24, #f87171, #fcd34d) border-box;
+        }
+        h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.75rem; }
+        p { margin: 0 0 1.25rem; line-height: 1.5; color: #a3a3a3; font-size: 0.95rem; }
+        a.btn {
+            display: inline-block; padding: 0.65rem 1.25rem; border-radius: 9999px;
+            font-weight: 500; text-decoration: none; color: #0a0a0a;
+            background: linear-gradient(90deg, #fbbf24, #f87171, #fcd34d);
+        }
+        a.btn:hover { filter: brightness(1.05); }
+        .hint { margin-top: 1.25rem; font-size: 0.8rem; color: #737373; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>This is the trading backend</h1>
+        <p>
+            Start from the intro page on the main site, then use <strong>Execute Trades</strong> to open the platform here inside the app.
+        </p>
+        {% if shell_url %}
+        <a class="btn" href="{{ shell_url }}">Go to intro page</a>
+        {% else %}
+        <p class="hint">Ask your admin to set <code>SHELL_SITE_URL</code> on this service to your Next.js URL, or open the frontend URL you were given.</p>
+        {% endif %}
+    </div>
+</body>
+</html>

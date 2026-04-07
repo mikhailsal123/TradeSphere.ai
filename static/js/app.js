@@ -2,18 +2,66 @@ let currentSimulationId = null;
 let statusInterval = null;
 let aiChatVisible = false;
 
+(function () {
+    function updateTsThemeToggleGlyph() {
+        var btn = document.getElementById('tsThemeToggle');
+        if (!btn) return;
+        var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        btn.innerHTML = dark
+            ? '<i class="fas fa-sun" aria-hidden="true"></i>'
+            : '<i class="fas fa-moon" aria-hidden="true"></i>';
+    }
+
+    function applyTradeSphereTheme(t) {
+        if (t !== 'light' && t !== 'dark') return;
+        document.documentElement.setAttribute('data-theme', t);
+        try {
+            localStorage.setItem('tradesphere-theme', t);
+        } catch (e) { /* ignore */ }
+        updateTsThemeToggleGlyph();
+    }
+
+    window.addEventListener('message', function (e) {
+        var d = e.data;
+        if (d && d.type === 'tradesphere-theme' && (d.theme === 'light' || d.theme === 'dark')) {
+            applyTradeSphereTheme(d.theme);
+        }
+    });
+
+    var params = new URLSearchParams(window.location.search);
+    var urlT = params.get('theme');
+    if (urlT === 'light' || urlT === 'dark') {
+        applyTradeSphereTheme(urlT);
+    } else {
+        try {
+            var s = localStorage.getItem('tradesphere-theme');
+            if (s === 'light' || s === 'dark') applyTradeSphereTheme(s);
+        } catch (err) { /* ignore */ }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var tsThemeToggle = document.getElementById('tsThemeToggle');
+        if (tsThemeToggle) {
+            updateTsThemeToggleGlyph();
+            tsThemeToggle.addEventListener('click', function () {
+                var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTradeSphereTheme(next);
+            });
+        }
+    });
+})();
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOMContentLoaded - Initializing app...');
-    
-    
+
     // Duration slider update
     const durationSlider = document.getElementById('durationDays');
     const durationValue = document.getElementById('durationValue');
     
     if (durationSlider && durationValue) {
         durationSlider.addEventListener('input', function() {
-            durationValue.textContent = this.value;
+            updateDurationLimits();
         });
     }
     
@@ -61,15 +109,22 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(() => {
         showAIAdvisor();
     }, 500);
-    
+
+    document.querySelectorAll('#tickersContainer input[type="text"]').forEach((input) => {
+        if (input.value.trim()) {
+            validateTicker(input);
+        }
+    });
+    document.querySelectorAll('#tradingRulesContainer .ticker-select').forEach((sel) => {
+        if (sel.value.trim()) {
+            validateTradingRuleTicker(sel);
+        }
+    });
 });
 
 async function startSimulation(e) {
     e.preventDefault();
-    console.log('startSimulation called');
-    
     const formData = collectFormData();
-    console.log('Form data collected:', formData);
     
     // Validate all tickers immediately before form validation
     await validateAllTickers();
@@ -88,7 +143,6 @@ async function startSimulation(e) {
     startBtn.innerHTML = '<span class="loading-spinner"></span> Starting...';
     progressCard.style.display = 'block';
     
-    // Start simulation
     fetch('/start_simulation', {
         method: 'POST',
         headers: {
@@ -96,27 +150,33 @@ async function startSimulation(e) {
         },
         body: JSON.stringify(formData)
     })
-    .then(response => response.json())
-    .then(data => {
+    .then(async (response) => {
+        let data;
+        try {
+            data = await response.json();
+        } catch {
+            throw new Error(response.statusText || 'Server returned non-JSON');
+        }
+        if (!response.ok) {
+            throw new Error(data.error || data.message || `Request failed (${response.status})`);
+        }
+        return data;
+    })
+    .then((data) => {
         if (data.success) {
             currentSimulationId = data.simulation_id;
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
-            
-            // Start polling for status updates
             startStatusPolling();
-            
-            // Clear previous results
             document.getElementById('resultsContainer').innerHTML = '';
             document.getElementById('finalMetricsCard').style.display = 'none';
         } else {
-            alert('Error: ' + data.error);
+            alert('Error: ' + (data.error || 'Unknown error'));
             resetForm();
         }
     })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Error starting simulation');
+    .catch((error) => {
+        alert('Error starting simulation: ' + error.message);
         resetForm();
     });
 }
@@ -138,39 +198,46 @@ function stopSimulation() {
 function startStatusPolling() {
     statusInterval = setInterval(() => {
         fetch(`/simulation_status/${currentSimulationId}`)
-        .then(response => response.json())
-        .then(data => {
-            console.log('Simulation status data:', data);
-            console.log('Beta hedge enabled check - has final_metrics:', !!data.final_metrics);
-            console.log('Is complete:', data.is_complete);
-            console.log('Has error:', !!data.error);
-            
+        .then(async (response) => {
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || `Status ${response.status}`);
+            }
+            return data;
+        })
+        .then((data) => {
             updateProgress(data);
             updateResults(data);
             
             if (data.is_complete) {
                 clearInterval(statusInterval);
+                statusInterval = null;
+                if (data.error) {
+                    alert('Simulation ended with an error: ' + data.error);
+                }
                 resetForm();
             }
         })
-        .catch(error => {
-            console.error('Error fetching status:', error);
-        });
-    }, 500); // Poll every 500ms
+        .catch(() => {});
+    }, 500);
 }
 
 function updateProgress(data) {
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
-    
-    const progress = Math.round(data.progress * 100);
-    progressBar.style.width = progress + '%';
-    progressBar.setAttribute('aria-valuenow', progress);
+    const results = Array.isArray(data.results) ? data.results : [];
+    const p = typeof data.progress === 'number' && !Number.isNaN(data.progress) ? data.progress : 0;
+    const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
+    progressBar.style.width = pct + '%';
+    progressBar.setAttribute('aria-valuenow', pct);
     
     if (data.is_complete) {
         progressText.textContent = 'Simulation Complete!';
+    } else if (p > 0 && Number.isFinite(p)) {
+        const approxTotal = Math.max(results.length, Math.round(results.length / p));
+        progressText.textContent = `Progress: ${pct}% (step ${results.length} of ~${approxTotal})`;
     } else {
-        progressText.textContent = `Day ${data.results.length} of ${data.results.length / data.progress} - Running...`;
+        progressText.textContent = `Starting… (${results.length} update${results.length === 1 ? '' : 's'})`;
     }
 }
 
@@ -215,7 +282,7 @@ function triggerRuleEvaporation() {
 function checkForExecutedOneTimeRules(data) {
     if (data && data.results && data.results.length > 0) {
         const latestResult = data.results[data.results.length - 1];
-        if (latestResult.one_time_rules_executed > 0) {
+        if ((latestResult.one_time_rules_executed || 0) > 0) {
             console.log(`DEBUG: ${latestResult.one_time_rules_executed} one-time rules were executed`);
             triggerRuleEvaporation();
         }
@@ -255,18 +322,21 @@ function addDayResult(result) {
     dayDiv.className = 'day-result';
     dayDiv.id = `day-${result.day}`;
     
-    if (result.trades.length > 0) {
+    const trades = result.trades || [];
+    const prices = result.prices || {};
+
+    if (trades.length > 0) {
         dayDiv.classList.add('trading-day');
     }
     
-    if (Object.keys(result.prices).length === 0) {
+    if (Object.keys(prices).length === 0) {
         dayDiv.classList.add('market-closed');
     }
     
     let pricesHtml = '';
-    if (Object.keys(result.prices).length > 0) {
+    if (Object.keys(prices).length > 0) {
         pricesHtml = '<div class="price-display">';
-        for (const [ticker, price] of Object.entries(result.prices)) {
+        for (const [ticker, price] of Object.entries(prices)) {
             pricesHtml += `<span class="badge bg-primary me-1">${ticker}: $${price.toFixed(2)}</span>`;
         }
         pricesHtml += '</div>';
@@ -275,9 +345,9 @@ function addDayResult(result) {
     }
     
     let tradesHtml = '';
-    if (result.trades.length > 0) {
+    if (trades.length > 0) {
         tradesHtml = '<div class="mt-2">';
-        result.trades.forEach(trade => {
+        trades.forEach(trade => {
             const isBuy = trade.toLowerCase().includes('bought') && !trade.toLowerCase().includes('bought back');
             const isHedge = trade.toLowerCase().includes('hedged') || trade.toLowerCase().includes('shorted') || trade.toLowerCase().includes('bought back');
             let tradeClass, icon;
@@ -306,14 +376,13 @@ function addDayResult(result) {
                 ${tradesHtml}
             </div>
             <div class="text-end">
-                <div class="portfolio-value">$${result.portfolio_value.toLocaleString()}</div>
-                <small class="text-dark">P&L: $${result.pnl ? result.pnl.toFixed(2) : '0.00'}</small>
+                <div class="portfolio-value">$${(result.portfolio_value != null ? Number(result.portfolio_value) : 0).toLocaleString()}</div>
+                <small class="text-dark">P&L: $${result.pnl != null ? Number(result.pnl).toFixed(2) : '0.00'}</small>
             </div>
         </div>
     `;
     
     resultsContainer.appendChild(dayDiv);
-    dayDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 
@@ -430,6 +499,23 @@ function showFinalResults(data) {
     }
 }
 
+function computeSimulationStartDate(tradingFrequency, durationDays, durationHours) {
+    const end = new Date();
+    let backDays;
+    if (tradingFrequency === 'daily') {
+        backDays = Math.min(400, Math.max(durationDays + 7, 14));
+    } else if (tradingFrequency === '60m') {
+        backDays = Math.min(60, Math.max(durationDays * 10 + 14, 14));
+    } else if (tradingFrequency === '1m' || tradingFrequency === '5m' || tradingFrequency === '15m') {
+        const h = durationHours || 1;
+        backDays = Math.min(60, Math.max(14, Math.ceil(h / 6.5) * 4 + 20));
+    } else {
+        backDays = 30;
+    }
+    const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - backDays);
+    return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+}
+
 function collectFormData() {
     const tickers = [];
     const tickerInputs = document.querySelectorAll('#tickersContainer .ticker-input');
@@ -480,10 +566,29 @@ function collectFormData() {
     
     console.log('DEBUG: Final trading rules array:', tradingRules);
     
+    const tradingFrequency = document.getElementById('tradingFrequency').value;
+    let span = parseInt(document.getElementById('durationDays').value, 10);
+    if (Number.isNaN(span)) {
+        span = tradingFrequency === 'daily' ? 30 : 3;
+    }
+
+    let duration_days;
+    let duration_hours = null;
+    if (tradingFrequency === 'daily' || tradingFrequency === '60m') {
+        duration_days = span;
+    } else {
+        duration_days = 1;
+        duration_hours = span;
+    }
+
+    const startDateStr = computeSimulationStartDate(tradingFrequency, duration_days, duration_hours);
+
     const formData = {
         initial_cash: parseFloat(document.getElementById('initialCash').value),
-        duration_days: parseInt(document.getElementById('durationDays').value),
-        trading_frequency: document.getElementById('tradingFrequency').value,
+        duration_days: duration_days,
+        duration_hours: duration_hours,
+        start_date: startDateStr,
+        trading_frequency: tradingFrequency,
         tickers: tickers,
         trading_rules: tradingRules,
         beta_hedge_enabled: document.getElementById('betaHedgeEnabled').checked
@@ -544,21 +649,35 @@ function validateForm(data) {
         return false;
     }
     
-    // Dynamic validation based on trading frequency
-    let maxDays = 365;
-    if (data.trading_frequency === '1m') {
-        maxDays = 7;
-    } else if (['5m', '15m', '60m'].includes(data.trading_frequency)) {
-        maxDays = 60;
-    }
-    
-    if (data.duration_days < 1 || data.duration_days > maxDays) {
-        const frequencyText = data.trading_frequency === '1m' ? '1-minute' : 
-                             data.trading_frequency === '5m' ? '5-minute' :
-                             data.trading_frequency === '15m' ? '15-minute' :
-                             data.trading_frequency === '60m' ? '60-minute' : 'daily';
-        alert(`Duration must be between 1 and ${maxDays} days for ${frequencyText} trading.`);
-        return false;
+    const tf = data.trading_frequency;
+    if (tf === 'daily') {
+        if (data.duration_days < 1 || data.duration_days > 365) {
+            alert('Simulation length must be between 1 and 365 days for daily trading.');
+            return false;
+        }
+    } else if (tf === '60m') {
+        if (data.duration_days < 1 || data.duration_days > 7) {
+            alert('For 60-minute intervals, choose 1–7 calendar days.');
+            return false;
+        }
+    } else if (tf === '1m') {
+        const h = data.duration_hours;
+        if (h == null || h < 1 || h > 6) {
+            alert('For 1-minute intervals, choose 1–6 hours of session data.');
+            return false;
+        }
+    } else if (tf === '5m') {
+        const h = data.duration_hours;
+        if (h == null || h < 1 || h > 12) {
+            alert('For 5-minute intervals, choose 1–12 hours.');
+            return false;
+        }
+    } else if (tf === '15m') {
+        const h = data.duration_hours;
+        if (h == null || h < 1 || h > 24) {
+            alert('For 15-minute intervals, choose 1–24 hours (up to about one day).');
+            return false;
+        }
     }
     
     // Validate portfolio value doesn't exceed initial cash
@@ -631,82 +750,104 @@ function getEstimatedStockPrice(ticker) {
 function updateDurationLimits() {
     const tradingFrequency = document.getElementById('tradingFrequency').value;
     const durationSlider = document.getElementById('durationDays');
+    const durationValue = document.getElementById('durationValue');
     const durationUnit = document.getElementById('durationUnit');
+    const durationLabelTitle = document.getElementById('durationLabelTitle');
     const minDuration = document.getElementById('minDuration');
     const maxDuration = document.getElementById('maxDuration');
-    const durationMidpoint = document.getElementById('durationMidpoint');
     const frequencyHelp = document.getElementById('frequencyHelp');
     const dateRangeInfo = document.getElementById('dateRangeInfo');
-    
-    const intervalConfigs = {
-        'daily': {
-            maxDays: 365,
-            intervalMinutes: 1440,
-            description: 'Daily: 1-day intervals, up to 365 days (1 trade per day)',
-            timeStepMinutes: 1440
+
+    const presets = {
+        daily: {
+            mode: 'days',
+            min: 1,
+            max: 365,
+            fallback: 30,
+            title: 'Simulation length',
+            unit: 'days',
+            help: 'Daily closes · max 365 days',
         },
         '1m': {
-            maxDays: 7,
-            intervalMinutes: 1,
-            description: '1-Minute: Real-time simulation, up to 7 days (market hours only: 9:30 AM - 4:00 PM)',
-            timeStepMinutes: 1
+            mode: 'hours',
+            min: 1,
+            max: 6,
+            fallback: 3,
+            title: 'Hours of the trading day to include',
+            unit: 'hours',
+            help: '1m bars · slider = session hours (max 6)',
         },
         '5m': {
-            maxDays: 60,
-            intervalMinutes: 5,
-            description: '5-Minute: High frequency trading, up to 60 days (market hours only: 9:30 AM - 4:00 PM)',
-            timeStepMinutes: 5
+            mode: 'hours',
+            min: 1,
+            max: 12,
+            fallback: 6,
+            title: 'Hours of the trading day to include',
+            unit: 'hours',
+            help: '5m bars · max 12 hours',
         },
         '15m': {
-            maxDays: 60,
-            intervalMinutes: 15,
-            description: '15-Minute: Short-term analysis, up to 60 days (market hours only: 9:30 AM - 4:00 PM)',
-            timeStepMinutes: 15
+            mode: 'hours',
+            min: 1,
+            max: 24,
+            fallback: 8,
+            title: 'Hours to cover (up to one day)',
+            unit: 'hours',
+            help: '15m bars · max 24 hours',
         },
         '60m': {
-            maxDays: 60,
-            intervalMinutes: 60,
-            description: '60-Minute: Hourly intervals, up to 60 days (market hours only: 9:30 AM - 4:00 PM)',
-            timeStepMinutes: 60
-        }
+            mode: 'days',
+            min: 1,
+            max: 7,
+            fallback: 3,
+            title: 'Calendar days',
+            unit: 'days',
+            help: 'Hourly bars · max 7 days',
+        },
     };
-    
-    const config = intervalConfigs[tradingFrequency];
-    
-    if (config) {
-        durationSlider.max = config.maxDays;
-        durationUnit.textContent = 'days';
-        minDuration.textContent = '1 day';
-        maxDuration.textContent = `${config.maxDays} days`;
-        durationMidpoint.textContent = Math.ceil(config.maxDays / 2);
-        frequencyHelp.textContent = config.description;
-        
-        updateDateRangeInfo(tradingFrequency, config.maxDays);
-        
-        if (parseInt(durationSlider.value) > config.maxDays) {
-            durationSlider.value = config.maxDays;
-            document.getElementById('durationValue').textContent = config.maxDays;
-        }
-    }
-}
 
-function updateDateRangeInfo(tradingFrequency, maxDays) {
-    const dateRangeInfo = document.getElementById('dateRangeInfo');
+    const p = presets[tradingFrequency] || presets.daily;
+    durationSlider.min = String(p.min);
+    durationSlider.max = String(p.max);
+
+    let v = parseInt(durationSlider.value, 10);
+    if (Number.isNaN(v) || v < p.min || v > p.max) {
+        v = p.fallback;
+        durationSlider.value = String(v);
+    } else if (v < p.min) {
+        v = p.min;
+        durationSlider.value = String(v);
+    } else if (v > p.max) {
+        v = p.max;
+        durationSlider.value = String(v);
+    }
+
+    durationValue.textContent = String(v);
+    durationUnit.textContent = p.unit;
+    if (durationLabelTitle) {
+        durationLabelTitle.textContent = p.title;
+    }
+    const unitWord = (n) => {
+        if (p.unit === 'hours') return n === 1 ? 'hour' : 'hours';
+        return n === 1 ? 'day' : 'days';
+    };
+    minDuration.textContent = `${p.min} ${unitWord(p.min)}`;
+    maxDuration.textContent = `${p.max} ${unitWord(p.max)}`;
+    frequencyHelp.textContent = p.help;
+
     const now = new Date();
-    const startDate = new Date(now);
-    startDate.setDate(now.getDate() - maxDays);
-    
-    const startDateStr = startDate.toLocaleDateString();
-    const endDateStr = now.toLocaleDateString();
-    
-    const timeDiff = now.getTime() - startDate.getTime();
-    const actualDays = Math.ceil(timeDiff / (1000 * 3600 * 24));
-    
-    dateRangeInfo.innerHTML = `
-        <strong>${startDateStr}</strong> to <strong>${endDateStr}</strong> 
-        <br>
-        <small class="text-muted">(~${actualDays} days, auto-calculated from current time)</small>
-    `;
+    if (p.mode === 'days') {
+        const span = parseInt(durationSlider.value, 10) || p.fallback;
+        const st = new Date(now.getFullYear(), now.getMonth(), now.getDate() - span);
+        dateRangeInfo.innerHTML = `
+            <strong>${st.toLocaleDateString()}</strong> → <strong>${now.toLocaleDateString()}</strong>
+            <br><small class="text-muted">~${span} days</small>`;
+    } else {
+        const h = parseInt(durationSlider.value, 10) || p.fallback;
+        dateRangeInfo.innerHTML = `
+            <strong>~${h}h</strong> intraday
+            <br><small class="text-muted">Recent sessions; provider limits may apply</small>`;
+    }
 }
 
 function initializePortfolioValidation() {
@@ -801,7 +942,7 @@ function addTicker() {
     tickerInput.className = 'ticker-input mb-2';
     tickerInput.innerHTML = `
         <div class="input-group">
-            <input type="text" class="form-control" placeholder="Ticker (e.g., AAPL)" maxlength="10" style="text-transform: uppercase;" oninput="validateTicker(this)">
+            <input type="text" class="form-control" placeholder="Ticker (e.g., AAPL)" maxlength="20" style="text-transform: uppercase;" oninput="validateTicker(this)">
             <input type="number" class="form-control" placeholder="Shares" value="100" min="1">
             <button type="button" class="btn btn-outline-danger" onclick="removeTicker(this)">
                 <i class="fas fa-trash"></i>
@@ -853,9 +994,13 @@ function addTradingRule() {
 }
 
 
+function validateTickerApiPath(ticker) {
+    return '/validate_ticker/' + encodeURIComponent(ticker);
+}
+
 function validateTicker(input) {
     const ticker = input.value.toUpperCase().trim();
-    const isValidFormat = /^[A-Z0-9.]{1,10}$/.test(ticker) && ticker.length >= 1;
+    const isValidFormat = /^[A-Z0-9.\-^]{1,20}$/.test(ticker) && ticker.length >= 1;
     
     // Remove existing validation classes
     input.classList.remove('is-valid', 'is-invalid', 'is-warning');
@@ -866,7 +1011,7 @@ function validateTicker(input) {
         return;
     } else if (!isValidFormat) {
         input.classList.add('is-invalid');
-        input.title = 'Invalid ticker format. Use 1-10 uppercase letters/numbers (e.g., AAPL, TSLA, BRK.A)';
+        input.title = 'Invalid ticker format (e.g., AAPL, BRK.B, BF-B, ^GSPC)';
         return;
     }
     
@@ -882,7 +1027,7 @@ function validateTickerWithAPI(ticker, inputElement) {
     // Debounce API calls to avoid too many requests
     clearTimeout(window.tickerValidationTimeout);
     window.tickerValidationTimeout = setTimeout(() => {
-        fetch(`/validate_ticker/${ticker}`)
+        fetch(validateTickerApiPath(ticker))
             .then(response => response.json())
             .then(data => {
                 // Remove loading state
@@ -902,8 +1047,7 @@ function validateTickerWithAPI(ticker, inputElement) {
                 // Trigger portfolio validation after ticker validation
                 validatePortfolioInRealTime();
             })
-            .catch(error => {
-                console.error('Ticker validation error:', error);
+            .catch(() => {
                 inputElement.classList.remove('is-warning');
                 inputElement.classList.add('is-invalid');
                 inputElement.title = 'Error validating ticker. Please try again.';
@@ -931,7 +1075,7 @@ async function validateAllTickers() {
 
 function validateTickerWithAPIImmediate(ticker, inputElement) {
     return new Promise((resolve) => {
-        fetch(`/validate_ticker/${ticker}`)
+        fetch(validateTickerApiPath(ticker))
             .then(response => response.json())
             .then(data => {
                 if (data.valid) {
@@ -946,8 +1090,7 @@ function validateTickerWithAPIImmediate(ticker, inputElement) {
                 }
                 resolve();
             })
-            .catch(error => {
-                console.error('Ticker validation error:', error);
+            .catch(() => {
                 inputElement.classList.remove('is-warning', 'is-valid');
                 inputElement.classList.add('is-invalid');
                 inputElement.title = 'Error validating ticker. Please try again.';
@@ -991,38 +1134,6 @@ function toggleOneTimeMode(tradingRule) {
     }
 }
 
-function updateDurationLimits() {
-    const tradingFrequency = document.getElementById('tradingFrequency').value;
-    const durationSlider = document.getElementById('durationDays');
-    const durationUnit = document.getElementById('durationUnit');
-    const minDuration = document.getElementById('minDuration');
-    const maxDuration = document.getElementById('maxDuration');
-    const durationMidpoint = document.getElementById('durationMidpoint');
-    const frequencyHelp = document.getElementById('frequencyHelp');
-    
-    if (tradingFrequency === 'intraday') {
-        // Intraday: 60-minute intervals, max 60 days
-        durationSlider.max = 60;
-        durationUnit.textContent = 'days';
-        minDuration.textContent = '1 day';
-        maxDuration.textContent = '60 days';
-        durationMidpoint.textContent = '30';
-        frequencyHelp.textContent = 'Intraday: 60-minute intervals, up to 60 days (6 intervals per day)';
-        if (parseInt(durationSlider.value) > 60) {
-            durationSlider.value = 60;
-            document.getElementById('durationValue').textContent = '60';
-        }
-    } else {
-        // Daily: 1 day intervals, max 365 days
-        durationSlider.max = 365;
-        durationUnit.textContent = 'days';
-        minDuration.textContent = '1 day';
-        maxDuration.textContent = '365 days';
-        durationMidpoint.textContent = '183';
-        frequencyHelp.textContent = 'Daily: 1-day intervals, up to 365 days (1 trade per day)';
-    }
-}
-
 // AI Chat Functions
 function initializeAIChat() {
     // Chat input and send button
@@ -1039,9 +1150,11 @@ function initializeAIChat() {
         });
     }
     
-    // Use event delegation for the clear button (works even if button is in collapsed element)
-    document.addEventListener('click', function(event) {
-        if (event.target && event.target.id === 'clearChatBtn') {
+    // Use event delegation — target may be the trash icon inside the button
+    document.addEventListener('click', function (event) {
+        const btn = event.target && event.target.closest && event.target.closest('#clearChatBtn');
+        if (btn) {
+            event.preventDefault();
             clearAIChat();
         }
     });
@@ -1174,25 +1287,18 @@ function formatMessage(text) {
 }
 
 function clearAIChat() {
-    // Show confirmation dialog
-    if (confirm('Are you sure you want to clear the chat history? This action cannot be undone.')) {
-        // Clear the chat messages container
-        const chatMessages = document.getElementById('aiChatMessages');
-        
-        if (chatMessages) {
-            // Ensure the chat is visible
-            const chatCollapse = document.getElementById('aiChatCollapse');
-            if (chatCollapse) {
-                chatCollapse.classList.add('show');
-            }
-            
-            // Clear all existing messages
-            chatMessages.innerHTML = '';
-            
-            // Add the initial welcome message
-            const welcomeMessage = document.createElement('div');
-            welcomeMessage.className = 'message ai-message';
-            welcomeMessage.innerHTML = `
+    const chatMessages = document.getElementById('aiChatMessages');
+    if (chatMessages) {
+        const chatCollapse = document.getElementById('aiChatCollapse');
+        if (chatCollapse) {
+            chatCollapse.classList.add('show');
+        }
+
+        chatMessages.innerHTML = '';
+
+        const welcomeMessage = document.createElement('div');
+        welcomeMessage.className = 'message ai-message';
+        welcomeMessage.innerHTML = `
                 <div class="message-content">
                     <i class="fas fa-robot"></i>
                     <div class="message-text">
@@ -1207,48 +1313,41 @@ function clearAIChat() {
                         </ul>
                     </div>
                 </div>
-                <div class="message-time">${new Date().toLocaleTimeString()}</div>
+                <div class="message-time" id="aiWelcomeTime">${new Date().toLocaleTimeString()}</div>
             `;
-            
-            chatMessages.appendChild(welcomeMessage);
-            
-            // Add a temporary visual indicator that clearing worked
-            chatMessages.style.backgroundColor = '#d4edda';
-            setTimeout(() => {
-                chatMessages.style.backgroundColor = '';
-            }, 1000);
-        }
-        
-        // Clear the chat input
-        const chatInput = document.getElementById('aiChatInput');
-        if (chatInput) {
-            chatInput.value = '';
-        }
-        
-        // Call the backend to clear conversation history
-        fetch('/clear_chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({})
-        })
-        .then(response => response.json())
-        .then(data => {
+
+        chatMessages.appendChild(welcomeMessage);
+
+        chatMessages.style.backgroundColor = '#d4edda';
+        setTimeout(() => {
+            chatMessages.style.backgroundColor = '';
+        }, 1000);
+    }
+
+    const chatInput = document.getElementById('aiChatInput');
+    if (chatInput) {
+        chatInput.value = '';
+    }
+
+    fetch('/clear_chat', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+    })
+        .then((response) => response.json())
+        .then((data) => {
             if (data.success) {
-                console.log('Chat history cleared successfully');
-                // Show a brief success message
-                const chatMessages = document.getElementById('aiChatMessages');
-                if (chatMessages) {
+                const box = document.getElementById('aiChatMessages');
+                if (box) {
                     const successDiv = document.createElement('div');
                     successDiv.className = 'alert alert-success alert-dismissible fade show';
                     successDiv.innerHTML = `
                         <i class="fas fa-check-circle"></i> Chat history cleared successfully!
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     `;
-                    chatMessages.appendChild(successDiv);
-                    
-                    // Remove the success message after 3 seconds
+                    box.appendChild(successDiv);
                     setTimeout(() => {
                         if (successDiv.parentNode) {
                             successDiv.parentNode.removeChild(successDiv);
@@ -1257,13 +1356,11 @@ function clearAIChat() {
                 }
             } else {
                 console.error('Failed to clear chat history:', data.error);
-                alert('Failed to clear chat history. Please try again.');
             }
         })
-        .catch(error => {
+        .catch((error) => {
             console.error('Error clearing chat history:', error);
         });
-    }
 }
 
 function showTypingIndicator() {
@@ -1297,66 +1394,28 @@ function hideTypingIndicator() {
 // Override the existing updateResults function to show AI advisor and plots
 const originalUpdateResults = updateResults;
 updateResults = function(data) {
-    console.log('🚀 updateResults override called with data:', data);
-    console.log('📊 Data keys:', Object.keys(data));
-    console.log('✅ is_complete:', data.is_complete);
-    console.log('📈 has_final_metrics:', 'final_metrics' in data);
-    console.log('🆔 currentSimulationId:', currentSimulationId);
-    console.log('🔍 Final metrics preview:', data.final_metrics ? Object.keys(data.final_metrics) : 'No final metrics');
-    
     originalUpdateResults(data);
-    
-    // Check for executed one-time rules and trigger evaporation
     checkForExecutedOneTimeRules(data);
-    
-    // Show final results, AI advisor and plots when simulation is complete
-    console.log('updateResults data:', { 
-        is_complete: data.is_complete, 
-        error: data.error, 
-        currentSimulationId,
-        resultsLength: data.results ? data.results.length : 0
-    });
-    console.log('🔍 Checking completion conditions:', {
-        is_complete: data.is_complete,
-        has_error: !!data.error,
-        has_simulation_id: !!currentSimulationId,
-        has_final_metrics: !!data.final_metrics
-    });
-    
-    if (data.is_complete && !data.error && currentSimulationId) {
-        console.log('✅ Simulation complete, showing final results, AI advisor and plots...');
-        console.log('📊 Final metrics in completion check:', data.final_metrics);
-        
-        // Show final results immediately if we have final_metrics
+
+    if (data.is_complete && currentSimulationId) {
         if (data.final_metrics) {
-            console.log('📈 Final metrics available, showing results now...');
             showFinalResults(data);
             showAIAdvisor();
             showPlotsCard();
         } else {
-            console.log('⏰ No final metrics yet, will retry in 1 second...');
             setTimeout(() => {
-                // Fetch fresh data to get final_metrics
                 fetch(`/simulation_status/${currentSimulationId}`)
-                    .then(response => response.json())
-                    .then(freshData => {
-                        console.log('🔄 Fresh data fetched:', freshData);
+                    .then((response) => response.json())
+                    .then((freshData) => {
                         if (freshData.final_metrics) {
                             showFinalResults(freshData);
                             showAIAdvisor();
                             showPlotsCard();
-                        } else {
-                            console.error('❌ Still no final_metrics in fresh data');
                         }
-                    });
+                    })
+                    .catch(() => {});
             }, 1000);
         }
-    } else {
-        console.log('❌ Not showing final results because:', {
-            is_complete: data.is_complete,
-            has_error: !!data.error,
-            has_simulation_id: !!currentSimulationId
-        });
     }
 };
 

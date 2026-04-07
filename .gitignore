@@ -1,5 +1,10 @@
 .env
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Dependencies
 node_modules/
 frontend/node_modules/
@@ -7,7 +12,7 @@ backend/node_modules/
 
 # Next.js
 frontend/.next/
-# frontend/out/  # Commented out for GitHub Pages deployment
+# frontend/out/  # Optional: uncomment to stop tracking Next static export (e.g. if you only deploy via Render)
 
 # Build outputs
 dist/

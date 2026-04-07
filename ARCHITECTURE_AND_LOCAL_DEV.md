@@ -1,6 +1,6 @@
-# PennApps Trading Platform Integration
+# Architecture and local development
 
-This project integrates a Next.js frontend with a Flask backend to create a comprehensive trading platform.
+How the Next.js shell, Flask trading API/UI, and Render deployment fit together.
 
 ## Architecture
 
@@ -11,10 +11,10 @@ This project integrates a Next.js frontend with a Flask backend to create a comp
 ## Features
 
 ### Frontend (Next.js)
-- Modern landing page with typing animation
+- Main page with typing animation
 - Responsive design with Tailwind CSS
 - Smooth transition to trading platform
-- Back button to return to landing page
+- Back button to return to the main page
 
 ### Backend (Flask)
 - Portfolio simulation engine
@@ -24,29 +24,40 @@ This project integrates a Next.js frontend with a Flask backend to create a comp
 - Performance metrics and charts
 - Beta hedging capabilities
 
-## Quick Start
+## Production
 
-### Option 1: Use the startup script (Recommended)
+Code lives on **GitHub**; **Render** should run **two** Web Services from this repo: Flask (`render.yaml`) and Next.js (`render-frontend.yaml`). Share the **Next.js** URL with users so they see the intro first; the Flask URL is loaded in an iframe after **Execute Trades**. See **README.md** for `NEXT_PUBLIC_FLASK_BACKEND_URL` and `SHELL_SITE_URL`.
+
+## Quick Start (local)
+
+### Option 1: One command from repo root (recommended)
 ```bash
-cd /Users/michaelsaleev/PennApps-Project
-./start_apps.sh
+npm install   # once, at repository root
+npm run dev   # starts Flask (5002) and Next.js (3000) together
 ```
 
-### Option 2: Manual startup
+### Option 2: Shell script
+```bash
+./dev_start_fullstack.sh
+```
+(Run from the repository root.)
 
-1. **Start Flask backend:**
+### Option 3: Manual (two terminals)
+
+1. **Flask** (listens on `127.0.0.1:5002` by default):
    ```bash
-   cd /Users/michaelsaleev/PennApps-Project
    pip install -r requirements.txt
-   python app.py
+   FLASK_ENV=development python3 flask_backend.py
    ```
 
-2. **Start Next.js frontend (in a new terminal):**
+2. **Next.js** (`npm run dev` in `frontend/` starts **both** Next and Flask via `concurrently`; the iframe uses `http://127.0.0.1:5002` in development):
    ```bash
-   cd /Users/michaelsaleev/PennApps-Project/frontend
+   cd frontend
    npm install
    npm run dev
    ```
+
+   Flask-only in another terminal: from repo root, `npm run backend:dev`. Next-only in `frontend/`: `npm run dev:next` (then you must run Flask separately).
 
 3. **Access the application:**
    - Frontend: http://localhost:3000
@@ -54,7 +65,7 @@ cd /Users/michaelsaleev/PennApps-Project
 
 ## How It Works
 
-1. **Landing Page**: Users see the modern Next.js landing page with animated code examples
+1. **Main page**: Users see the Next.js main page with animated code examples
 2. **Execute Trade Button**: Clicking this button reveals the Flask trading platform in an iframe
 3. **Trading Platform**: Full-featured portfolio simulation with:
    - Portfolio configuration
@@ -62,7 +73,7 @@ cd /Users/michaelsaleev/PennApps-Project
    - Real-time simulation
    - AI analysis
    - Performance charts
-4. **Back Button**: Users can return to the landing page anytime
+4. **Back Button**: Users can return to the main page anytime
 
 ## Configuration
 
@@ -104,7 +115,7 @@ cd /Users/michaelsaleev/PennApps-Project
 ## Development
 
 - Frontend code: `/frontend/src/app/`
-- Backend code: `/app.py`
+- Backend code: `/flask_backend.py`
 - Static assets: `/static/`
 - Templates: `/templates/`
 

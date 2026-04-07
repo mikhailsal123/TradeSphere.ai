@@ -2,15 +2,12 @@
   "name": "tradesphere-fullstack",
   "version": "1.0.0",
   "scripts": {
-    "dev": "concurrently \"npm run frontend:dev\" \"npm run backend:dev\"",
+    "dev": "npm run dev --prefix frontend",
     "build": "cd frontend && npm install && npm run build",
     "start": "npm run frontend:start",
-    "frontend:dev": "cd frontend && npm run dev",
+    "frontend:dev": "npm run dev --prefix frontend",
     "frontend:start": "cd frontend && npm start",
-    "backend:dev": "python3 app.py",
-    "backend:start": "python3 app.py"
-  },
-  "dependencies": {
-    "concurrently": "^8.2.2"
+    "backend:dev": "FLASK_ENV=development FLASK_PORT=5002 python3 flask_backend.py",
+    "backend:start": "python3 flask_backend.py"
   }
 }

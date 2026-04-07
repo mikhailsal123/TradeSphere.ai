@@ -1,0 +1,466 @@
+/* TradeSphere — light/dark themes (aligned with Next.js shell). Load after style.css */
+
+html[data-theme="light"] {
+    color-scheme: light;
+}
+
+html[data-theme="dark"] {
+    color-scheme: dark;
+}
+
+/* Light: clearer sky / indigo accents */
+html[data-theme="light"] body {
+    background: linear-gradient(165deg, #eff6ff 0%, #dbeafe 42%, #e0e7ff 100%);
+    color: #0f172a;
+}
+
+/* Dark: near-black to match marketing landing */
+html[data-theme="dark"] body {
+    background: linear-gradient(180deg, #000000 0%, #050505 45%, #0a0a0a 100%);
+    color: #f4f4f5;
+}
+
+html[data-theme="light"] .form-label {
+    color: #475569;
+}
+
+html[data-theme="dark"] .form-label {
+    color: #cbd5e1;
+}
+
+html[data-theme="light"] .sidebar {
+    background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+    border-right-color: #7dd3fc;
+    box-shadow: 2px 0 24px rgba(3, 105, 161, 0.08);
+}
+
+html[data-theme="dark"] .sidebar {
+    background: linear-gradient(180deg, #000000 0%, #0a0a0a 100%);
+    border-right-color: #27272a;
+    box-shadow: 2px 0 32px rgba(0, 0, 0, 0.75);
+}
+
+html[data-theme="light"] .card {
+    background: #ffffff;
+    border-color: #38bdf8;
+    box-shadow: 0 4px 24px rgba(3, 105, 161, 0.1);
+}
+
+html[data-theme="dark"] .card {
+    background: #0c0c0e;
+    border-color: #27272a;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.65);
+}
+
+html[data-theme="light"] .card-header {
+    background: linear-gradient(90deg, #0284c7 0%, #4f46e5 100%);
+    color: #ffffff;
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+html[data-theme="dark"] .card-header {
+    background: linear-gradient(90deg, #0e7490 0%, #1e3a5f 50%, #312e81 100%);
+    color: #fff;
+    border-bottom-color: rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme="light"] .form-control,
+html[data-theme="light"] .form-select {
+    background-color: #ffffff;
+    border-color: #cbd5e1;
+    color: #0f172a;
+}
+
+html[data-theme="dark"] .form-control,
+html[data-theme="dark"] .form-select {
+    background-color: #111111;
+    border-color: #3f3f46;
+    color: #f4f4f5;
+}
+
+html[data-theme="light"] .form-control:focus,
+html[data-theme="light"] .form-select:focus {
+    border-color: #0284c7;
+    box-shadow: 0 0 0 0.2rem rgba(2, 132, 199, 0.28);
+}
+
+html[data-theme="dark"] .form-control:focus,
+html[data-theme="dark"] .form-select:focus {
+    border-color: #22d3ee;
+    box-shadow: 0 0 0 0.2rem rgba(34, 211, 238, 0.18);
+}
+
+html[data-theme="light"] .trading-frequency-select {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    border-color: #cbd5e1;
+    color: #0f172a;
+}
+
+html[data-theme="dark"] .trading-frequency-select {
+    background: linear-gradient(180deg, #111111 0%, #18181b 100%);
+    border-color: #3f3f46;
+    color: #f4f4f5;
+}
+
+html[data-theme="light"] .ticker-input,
+html[data-theme="light"] .trading-rule {
+    background-color: #f0f9ff;
+    border-color: #7dd3fc;
+}
+
+html[data-theme="dark"] .ticker-input,
+html[data-theme="dark"] .trading-rule {
+    background-color: #111111;
+    border-color: #3f3f46;
+}
+
+html[data-theme="light"] .ticker-input:hover,
+html[data-theme="light"] .trading-rule:hover {
+    border-color: #0284c7;
+    background-color: #e0f2fe;
+    box-shadow: 0 2px 12px rgba(2, 132, 199, 0.18);
+}
+
+html[data-theme="dark"] .ticker-input:hover,
+html[data-theme="dark"] .trading-rule:hover {
+    border-color: #22d3ee;
+    background-color: #18181b;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+html[data-theme="light"] .alert-info {
+    background-color: #dbeafe;
+    border-color: #3b82f6;
+    color: #1e3a8a;
+}
+
+html[data-theme="dark"] .alert-info {
+    background-color: rgba(30, 58, 95, 0.45);
+    border-color: #38bdf8;
+    color: #e0f2fe;
+}
+
+html[data-theme="light"] .progress {
+    background-color: #e2e8f0;
+    border-color: #cbd5e1;
+}
+
+html[data-theme="dark"] .progress {
+    background-color: #18181b;
+    border-color: #3f3f46;
+}
+
+html[data-theme="light"] .day-result {
+    background-color: #ffffff;
+    border-color: #7dd3fc;
+}
+
+html[data-theme="dark"] .day-result {
+    background-color: #0c0c0e;
+    border-color: #3f3f46;
+    color: #e4e4e7;
+}
+
+html[data-theme="dark"] .day-result.market-closed {
+    background-color: #18181b;
+    color: #a1a1aa;
+}
+
+html[data-theme="light"] .price-display {
+    color: #0f172a;
+}
+
+html[data-theme="dark"] .price-display {
+    color: #f1f5f9;
+}
+
+html[data-theme="dark"] .neutral {
+    color: #cbd5e1;
+}
+
+html[data-theme="light"] #resultsContainer::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+html[data-theme="dark"] #resultsContainer::-webkit-scrollbar-track {
+    background: #111111;
+}
+
+html[data-theme="light"] #resultsContainer::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+}
+
+html[data-theme="dark"] #resultsContainer::-webkit-scrollbar-thumb {
+    background: #64748b;
+}
+
+html[data-theme="light"] .chat-messages {
+    background-color: #dbeafe;
+}
+
+html[data-theme="dark"] .chat-messages {
+    background-color: #111111;
+}
+
+html[data-theme="light"] .message-text {
+    background-color: #ffffff;
+    color: #0f172a;
+}
+
+html[data-theme="dark"] .message-text {
+    background-color: #18181b;
+    color: #f4f4f5;
+}
+
+html[data-theme="dark"] .message-time {
+    color: #94a3b8;
+}
+
+html[data-theme="light"] .user-message .message-text {
+    background: linear-gradient(135deg, #0284c7 0%, #6366f1 100%);
+    color: #fff;
+}
+
+html[data-theme="dark"] .user-message .message-text {
+    background: linear-gradient(135deg, #0e7490 0%, #4338ca 100%);
+    color: #fff;
+}
+
+html[data-theme="light"] .ai-typing {
+    background-color: #ffffff;
+}
+
+html[data-theme="dark"] .ai-typing {
+    background-color: #18181b;
+}
+
+html[data-theme="light"] .quick-questions {
+    border-top-color: #e2e8f0;
+}
+
+html[data-theme="dark"] .quick-questions {
+    border-top-color: #3f3f46;
+}
+
+html[data-theme="light"] #plotContainer img {
+    border-color: #e2e8f0;
+}
+
+html[data-theme="dark"] #plotContainer img {
+    border-color: #3f3f46;
+}
+
+html[data-theme="dark"] .text-dark {
+    color: #f1f5f9 !important;
+}
+
+html[data-theme="dark"] .text-muted {
+    color: #94a3b8 !important;
+}
+
+html[data-theme="dark"] #aiAdvisorCard .card-header {
+    background: linear-gradient(90deg, #0f766e 0%, #155e75 45%, #312e81 100%);
+    color: #fff;
+}
+
+html[data-theme="dark"] #aiAdvisorCard .card-header h5,
+html[data-theme="dark"] #aiAdvisorCard .card-header .btn {
+    color: #fff !important;
+}
+
+html[data-theme="dark"] #aiAdvisorCard .card-header .btn-outline-light {
+    border-color: rgba(255, 255, 255, 0.55);
+}
+
+html[data-theme="dark"] #aiAdvisorCard .card-header .btn-outline-light:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #fff !important;
+}
+
+html[data-theme="light"] #aiAdvisorCard .card-header {
+    background: linear-gradient(90deg, #0369a1 0%, #4338ca 100%);
+    color: #ffffff;
+}
+
+html[data-theme="light"] #aiAdvisorCard .card-header h5,
+html[data-theme="light"] #aiAdvisorCard .card-header .btn {
+    color: #ffffff !important;
+}
+
+html[data-theme="light"] #aiAdvisorCard .card-header .btn-outline-light {
+    border-color: rgba(255, 255, 255, 0.65);
+    color: #ffffff !important;
+}
+
+html[data-theme="light"] #aiAdvisorCard .card-header .btn-outline-light:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #ffffff !important;
+}
+
+html[data-theme="dark"] .metric-card {
+    background: linear-gradient(135deg, #0891b2 0%, #4f46e5 100%);
+}
+
+html[data-theme="light"] .metric-card {
+    background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+}
+
+/* Light mode: main column & typography (override legacy style.css) */
+html[data-theme="light"] .col-md-8 {
+    background-color: #e0f2fe;
+    color: #0f172a;
+}
+
+html[data-theme="light"] .text-dark {
+    color: #0f172a !important;
+}
+
+html[data-theme="light"] .text-muted {
+    color: #64748b !important;
+}
+
+html[data-theme="light"] .card-body {
+    color: #0f172a;
+}
+
+html[data-theme="light"] .card-body .text-dark,
+html[data-theme="light"] .card-body small.text-dark {
+    color: #0f172a !important;
+}
+
+html[data-theme="light"] .form-check-label {
+    color: #475569;
+}
+
+html[data-theme="light"] .btn-outline-secondary {
+    color: #475569 !important;
+    border-color: #cbd5e1 !important;
+    background-color: #ffffff;
+}
+
+html[data-theme="light"] .btn-outline-secondary:hover {
+    background-color: #f1f5f9;
+    color: #0f172a !important;
+}
+
+html[data-theme="light"] .btn-outline-primary {
+    color: #0369a1 !important;
+    border-color: #0284c7 !important;
+}
+
+html[data-theme="light"] .btn-outline-primary:hover {
+    background-color: #dbeafe;
+    color: #1e3a8a !important;
+}
+
+html[data-theme="light"] .plot-btn-group .btn {
+    color: #475569;
+    border-color: #cbd5e1;
+    background-color: #ffffff;
+}
+
+html[data-theme="light"] .plot-btn-group .btn.active {
+    background: linear-gradient(90deg, #0284c7 0%, #4f46e5 100%);
+    border-color: transparent;
+    color: #fff !important;
+}
+
+html[data-theme="light"] .day-result.market-closed {
+    background-color: #f1f5f9 !important;
+    color: #475569 !important;
+}
+
+html[data-theme="light"] .loading-spinner {
+    border-color: #bae6fd;
+    border-top-color: #0284c7;
+}
+
+html[data-theme="light"] .message-time {
+    color: #64748b;
+}
+
+/* Primary / progress — match cool trading palette */
+html[data-theme="dark"] .btn-primary {
+    background: linear-gradient(135deg, #0891b2 0%, #6366f1 100%);
+    border: none;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3);
+}
+
+html[data-theme="dark"] .btn-primary:hover {
+    background: linear-gradient(135deg, #0e7490 0%, #4f46e5 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.35);
+}
+
+html[data-theme="light"] .btn-primary {
+    background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+    border: none;
+    color: #fff;
+    box-shadow: 0 2px 10px rgba(2, 132, 199, 0.35);
+}
+
+html[data-theme="light"] .btn-primary:hover {
+    background: linear-gradient(135deg, #0369a1 0%, #4338ca 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(67, 56, 202, 0.35);
+}
+
+html[data-theme="dark"] .progress-bar {
+    background: linear-gradient(135deg, #06b6d4 0%, #6366f1 100%);
+    box-shadow: 0 2px 4px rgba(6, 182, 212, 0.25);
+}
+
+html[data-theme="light"] .progress-bar {
+    background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+    box-shadow: 0 2px 4px rgba(2, 132, 199, 0.4);
+}
+
+/* Theme toggle (Flask UI) */
+.ts-theme-toggle {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 1080;
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 1px solid #e2e8f0;
+    background: rgba(255, 255, 255, 0.92);
+    color: #0f172a;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 12px rgba(15, 23, 42, 0.08);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+html[data-theme="dark"] .ts-theme-toggle {
+    border-color: #3f3f46;
+    background: rgba(12, 12, 14, 0.96);
+    color: #67e8f9;
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.6);
+}
+
+.ts-theme-toggle:hover {
+    transform: scale(1.05);
+}
+
+/* Company name only — neutral UI font */
+.ts-brand-header .ts-brand-title {
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+}
+
+/* Section / panel titles (fintech) — not the company wordmark */
+.card-header:not(.ts-brand-header) h3,
+.card-header:not(.ts-brand-header) h4,
+.card-header:not(.ts-brand-header) h5,
+.card-header:not(.ts-brand-header) h6,
+#progressCard .card-body > h5 {
+    font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+}

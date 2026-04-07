@@ -1,18 +1,7 @@
 from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
-import requests
 
-# Set up a session with proper browser headers to avoid IP blocking
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-})
 
 def get_stock_data_with_retry(ticker_symbol, start_date=None, end_date=None, interval='1d', max_retries=3):
     """Get stock data with retry logic and delays to avoid rate limiting"""
@@ -21,7 +10,7 @@ def get_stock_data_with_retry(ticker_symbol, start_date=None, end_date=None, int
     
     for attempt in range(max_retries):
         try:
-            stock = yf.Ticker(ticker_symbol, session=session)
+            stock = yf.Ticker(ticker_symbol)
             if start_date and end_date:
                 data = stock.history(start=start_date, end=end_date, interval=interval)
             else:
@@ -106,7 +95,7 @@ class StockData:
         Returns:
             pandas.DataFrame: Stock data for the specific date"""
 
-        stock = yf.Ticker(stock_symbol, session=session)
+        stock = yf.Ticker(stock_symbol)
         date_obj = datetime.strptime(date, '%Y-%m-%d')
         new_date = date_obj + timedelta(days=1)
         self.stock_data = stock.history(start=date, end=new_date.strftime('%Y-%m-%d'))
@@ -133,7 +122,7 @@ class StockData:
         elif int(period[0:-1]) > 8 and interval == "1m":
             return "Error: Period cannot be greater than 8 days for 1-minute intervals"
     
-        stock = yf.Ticker(stock_symbol, session=session)
+        stock = yf.Ticker(stock_symbol)
         self.stock_data = stock.history(period=period, interval=interval)
         
         if self.stock_data.empty:
