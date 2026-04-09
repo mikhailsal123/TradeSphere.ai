@@ -3,30 +3,19 @@ let statusInterval = null;
 let aiChatVisible = false;
 
 function teebyChatAvatarHtml(small) {
-    const light =
-        typeof window.TEEBY_CHAT_AVATAR_LIGHT_URL === 'string' && window.TEEBY_CHAT_AVATAR_LIGHT_URL
-            ? window.TEEBY_CHAT_AVATAR_LIGHT_URL
-            : '/static/img/teeby-chat-light.jpg';
-    const dark =
-        typeof window.TEEBY_CHAT_AVATAR_DARK_URL === 'string' && window.TEEBY_CHAT_AVATAR_DARK_URL
-            ? window.TEEBY_CHAT_AVATAR_DARK_URL
-            : '/static/img/teeby-chat-dark.jpg';
+    const src =
+        typeof window.TEEBY_AVATAR_URL === 'string' && window.TEEBY_AVATAR_URL
+            ? window.TEEBY_AVATAR_URL
+            : '/static/media/teeby-avatar.png';
     const wrapCls = 'teeby-chat-avatar-wrap' + (small ? ' teeby-chat-avatar-wrap--sm' : '');
     const dim = small ? 62 : 84;
     return (
         '<span class="' +
         wrapCls +
         '" aria-hidden="true">' +
-        '<img class="teeby-chat-img teeby-chat-img--light" src="' +
-        light +
-        '" alt="" width="' +
-        dim +
-        '" height="' +
-        dim +
-        '" loading="lazy" decoding="async">' +
-        '<img class="teeby-chat-img teeby-chat-img--dark" src="' +
-        dark +
-        '" alt="" width="' +
+        '<img class="teeby-chat-img" src="' +
+        src +
+        '" alt="Teeby" width="' +
         dim +
         '" height="' +
         dim +
@@ -283,9 +272,9 @@ function updateResults(data) {
             resultsContainer.innerHTML = '';
         }
         
-        // Add new results
-        const latestResults = data.results.slice(-5); // Show last 5 days
-        latestResults.forEach(result => {
+        // Append every new interval (do not use slice(-5): fast sims add many rows per poll and
+        // intermediate steps would be skipped, so PnL/value would appear not to update each bar).
+        data.results.forEach((result) => {
             if (!document.getElementById(`day-${result.day}`)) {
                 addDayResult(result);
             }
@@ -409,8 +398,9 @@ function addDayResult(result) {
                 ${tradesHtml}
             </div>
             <div class="text-end">
-                <div class="portfolio-value">$${(result.portfolio_value != null ? Number(result.portfolio_value) : 0).toLocaleString()}</div>
-                <small class="text-dark">P&L: $${result.pnl != null ? Number(result.pnl).toFixed(2) : '0.00'}</small>
+                <div class="portfolio-value">$${(result.portfolio_value != null ? Number(result.portfolio_value) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <small class="text-dark d-block">PnL: $${result.pnl != null ? Number(result.pnl).toFixed(2) : '0.00'}</small>
+                ${result.cash != null && !Number.isNaN(Number(result.cash)) ? `<small class="text-dark d-block">Cash: $${Number(result.cash).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</small>` : ''}
             </div>
         </div>
     `;
@@ -428,47 +418,68 @@ function showFinalResults(data) {
         console.log('Available data keys:', Object.keys(data));
         return;
     }
+
+    const isFin = (v) => typeof v === 'number' && Number.isFinite(v);
+    const fmtMoney = (v) => (isFin(v) ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'N/A');
+    const fmtFixed = (v, d) => (isFin(v) ? v.toFixed(d) : 'N/A');
+    const fmtPctReturn = (v) => (isFin(v) ? `${v >= 0 ? '+' : ''}${v}%` : 'N/A');
     
     try {
         if (data.final_metrics) {
-            console.log('📊 Final metrics found:', data.final_metrics);
-            console.log('💰 Final value:', data.final_metrics.final_value, 'type:', typeof data.final_metrics.final_value);
-            console.log('📈 Total return:', data.final_metrics.total_return_pct, 'type:', typeof data.final_metrics.total_return_pct);
-            console.log('⚡ Sharpe ratio:', data.final_metrics.sharpe_ratio, 'type:', typeof data.final_metrics.sharpe_ratio);
-            console.log('📊 Beta:', data.final_metrics.beta, 'type:', typeof data.final_metrics.beta);
+            const fm = data.final_metrics;
+            console.log('📊 Final metrics found:', fm);
+            console.log('💰 Final value:', fm.final_value, 'type:', typeof fm.final_value);
+            console.log('📈 Total return:', fm.total_return_pct, 'type:', typeof fm.total_return_pct);
+            console.log('⚡ Sharpe ratio:', fm.sharpe_ratio, 'type:', typeof fm.sharpe_ratio);
+            console.log('📊 Beta:', fm.beta, 'type:', typeof fm.beta);
             
             const finalMetricsCard = document.getElementById('finalMetricsCard');
             const finalMetrics = document.getElementById('finalMetrics');
             console.log('Final metrics card element:', finalMetricsCard);
             console.log('Final metrics element:', finalMetrics);
+            if (!finalMetricsCard || !finalMetrics) {
+                console.error('finalMetricsCard or finalMetrics element missing from DOM');
+                return;
+            }
+            
+            const retCls = isFin(fm.total_return_pct) ? (fm.total_return_pct >= 0 ? 'positive' : 'negative') : '';
+            const pnlCls = isFin(fm.total_pnl) ? (fm.total_pnl >= 0 ? 'positive' : 'negative') : '';
             
             finalMetrics.innerHTML = `
             <div class="col-md-3">
                 <div class="metric-card">
-                    <div class="metric-value">$${isNaN(data.final_metrics.final_value) ? 'N/A' : data.final_metrics.final_value.toLocaleString()}</div>
+                    <div class="metric-value">$${fmtMoney(fm.final_value)}</div>
                     <div class="metric-label">Final Value</div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="metric-card">
-                    <div class="metric-value ${data.final_metrics.total_return_pct >= 0 ? 'positive' : 'negative'}">
-                        ${data.final_metrics.total_return_pct >= 0 ? '+' : ''}${data.final_metrics.total_return_pct}%
+                    <div class="metric-value ${retCls}">
+                        ${fmtPctReturn(fm.total_return_pct)}
                     </div>
                     <div class="metric-label">Total Return</div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="metric-card">
-                    <div class="metric-value ${data.final_metrics.total_pnl >= 0 ? 'positive' : 'negative'}">
-                        $${isNaN(data.final_metrics.total_pnl) ? 'N/A' : data.final_metrics.total_pnl.toLocaleString()}
+                    <div class="metric-value ${pnlCls}">
+                        $${fmtMoney(fm.total_pnl)}
                     </div>
-                    <div class="metric-label">Total P&L</div>
+                    <div class="metric-label">Total PnL</div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="metric-card">
                     <div class="metric-value">
-                        ${isNaN(data.final_metrics.sharpe_ratio) ? 'N/A' : data.final_metrics.sharpe_ratio.toFixed(3)}
+                        ${fmtFixed(fm.volatility_pct, 2)}${isFin(fm.volatility_pct) ? '%' : ''}
+                    </div>
+                    <div class="metric-label">Volatility (ann.)</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="metric-card">
+                    <div class="metric-value">
+                        ${fmtFixed(fm.sharpe_ratio, 3)}
                     </div>
                     <div class="metric-label">Sharpe Ratio</div>
                 </div>
@@ -476,16 +487,16 @@ function showFinalResults(data) {
             <div class="col-md-3">
                 <div class="metric-card">
                     <div class="metric-value">
-                        ${isNaN(data.final_metrics.beta) ? 'N/A' : data.final_metrics.beta.toFixed(3)}
+                        ${fmtFixed(fm.beta, 3)}
                     </div>
                     <div class="metric-label">Beta</div>
-                    ${data.final_metrics.beta_interpretation ? `<div class="metric-subtitle">${data.final_metrics.beta_interpretation.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
+                    ${fm.beta_interpretation ? `<div class="metric-subtitle">${String(fm.beta_interpretation).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="metric-card">
                     <div class="metric-value">
-                        ${isNaN(data.final_metrics.correlation) ? 'N/A' : data.final_metrics.correlation.toFixed(3)}
+                        ${fmtFixed(fm.correlation, 3)}
                     </div>
                     <div class="metric-label">Market Correlation</div>
                 </div>
@@ -493,7 +504,7 @@ function showFinalResults(data) {
             <div class="col-md-3">
                 <div class="metric-card">
                     <div class="metric-value">
-                        ${data.final_metrics.hedge_trades_count || 0}
+                        ${Number.isFinite(Number(fm.hedge_trades_count)) ? fm.hedge_trades_count : 0}
                     </div>
                     <div class="metric-label">Hedge Trades</div>
                 </div>
@@ -501,7 +512,7 @@ function showFinalResults(data) {
             <div class="col-md-3">
                 <div class="metric-card">
                     <div class="metric-value">
-                        $${isNaN(data.final_metrics.total_hedge_margin_used) ? '0' : data.final_metrics.total_hedge_margin_used.toLocaleString()}
+                        $${fmtMoney(isFin(fm.total_hedge_margin_used) ? fm.total_hedge_margin_used : 0)}
                     </div>
                     <div class="metric-label">Margin Used</div>
                 </div>
@@ -509,7 +520,7 @@ function showFinalResults(data) {
             <div class="col-md-3">
                 <div class="metric-card">
                     <div class="metric-value">
-                        $${isNaN(data.final_metrics.hedge_margin_remaining) ? '0' : data.final_metrics.hedge_margin_remaining.toLocaleString()}
+                        $${fmtMoney(isFin(fm.hedge_margin_remaining) ? fm.hedge_margin_remaining : 0)}
                     </div>
                     <div class="metric-label">Margin Remaining</div>
                 </div>

@@ -243,7 +243,7 @@ html:not(.dark) .ts-syntax-typing .text-sky-400 {
 
 html:not(.dark) .execute-trades-btn:hover {
   transform: translateY(-2px);
-  color: #fff !important;
+  color: #000 !important;
   box-shadow:
     0 0 22px rgba(46, 204, 113, 0.4),
     0 0 42px rgba(173, 255, 47, 0.25),

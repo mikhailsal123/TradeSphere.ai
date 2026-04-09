@@ -1,13 +1,16 @@
 from datetime import datetime, timedelta
+import logging
+import time
+import random
+
 import pandas as pd
 import yfinance as yf
 
+_log = logging.getLogger(__name__)
+
 
 def get_stock_data_with_retry(ticker_symbol, start_date=None, end_date=None, interval='1d', max_retries=3):
-    """Get stock data with retry logic and delays to avoid rate limiting"""
-    import time
-    import random
-    
+    """Get stock data with short backoff retries (Yahoo rate limits)."""
     for attempt in range(max_retries):
         try:
             stock = yf.Ticker(ticker_symbol)
@@ -15,20 +18,15 @@ def get_stock_data_with_retry(ticker_symbol, start_date=None, end_date=None, int
                 data = stock.history(start=start_date, end=end_date, interval=interval)
             else:
                 data = stock.history(period="1d", interval=interval)
-            
             if not data.empty:
                 return data
-                
         except Exception as e:
-            print(f"DEBUG: Attempt {attempt + 1} failed for {ticker_symbol}: {str(e)}")
+            _log.debug("yfinance attempt %s/%s failed for %s: %s", attempt + 1, max_retries, ticker_symbol, e)
             if attempt < max_retries - 1:
-                delay = random.uniform(1, 3)  # Random delay between 1-3 seconds
-                print(f"DEBUG: Waiting {delay:.1f} seconds before retry...")
-                time.sleep(delay)
+                time.sleep(random.uniform(0.2, 0.6))
             else:
-                raise e
-    
-    return pd.DataFrame()  # Return empty DataFrame if all retries fail
+                raise
+    return pd.DataFrame()
 
 '''Code for the data struture storing stock time series and analysis functions'''
 
@@ -36,25 +34,22 @@ class StockData:
     period_limit = 60 # 60 days for minute intervals 
     interval_set = set(["1m", "2m", "5m", "15m", "30m", "60m"])
 
-    def __init__(self, stock_symbol, var1, var2 = None): # var1 and var2 define which 
+    def __init__(self, stock_symbol, var1, var2=None, yf_interval='1d', allow_daily_fallback=True):
+        """yf_interval applies when var2 is a YYYY-MM-DD end date (date-range fetch)."""
         self.ticker = stock_symbol
         if var2 is None:
             self.get_stock_data_for_date(stock_symbol, var1)
-        #date format length
         elif len(var2) == 10:
-            self.get_stock_data(stock_symbol, var1, var2)
+            self.get_stock_data(stock_symbol, var1, var2, yf_interval, allow_daily_fallback)
         else:
             self.get_stock_data_for_time_interval(stock_symbol, var1, var2)
 
     # print error when no data is found
     def stock_error_message(self, stock_symbol, date):
-        print(f"${stock_symbol}: No data found for {date}")
-        print("This might be because:")
-        print("- The date falls on a weekend or holiday")
-        print("- The stock symbol is invalid")
+        _log.warning("No Yahoo data for %s (requested around %s)", stock_symbol, date)
 
     # get stock data in a range (per day basis)
-    def get_stock_data(self, stock_symbol, start_date, end_date, interval='1d'):
+    def get_stock_data(self, stock_symbol, start_date, end_date, interval='1d', allow_daily_fallback=True):
         """Get stock data for a given symbol and date range.
         Args:
             stock_symbol: Stock ticker symbol (e.g., 'AAPL')
@@ -65,23 +60,20 @@ class StockData:
             pandas.DataFrame: Stock data or empty DataFrame if no data found"""
 
         if start_date == end_date:
-            print("Error: End date is the same as start date")
-    
-        print(f"DEBUG: Fetching {interval} data for {stock_symbol} from {start_date} to {end_date}")
+            _log.warning("StockData: start_date == end_date for %s", stock_symbol)
+
+        _log.debug("Fetching %s %s %s → %s", interval, stock_symbol, start_date, end_date)
         self.stock_data = get_stock_data_with_retry(stock_symbol, start_date, end_date, interval)
         
-        # If no data for intraday interval, try daily data as fallback
-        if self.stock_data.empty and interval in ['60m', '30m', '15m', '5m', '1m']:
-            print(f"DEBUG: No {interval} data available, trying daily data as fallback")
+        # Do not fall back to daily for minute/hour bars in sims: one daily row at midnight makes
+        # minute-stepped currtime reuse the same bar every time (flat prices at 00:01, 00:02, ...).
+        if self.stock_data.empty and interval in ['60m', '30m', '15m', '5m', '1m'] and allow_daily_fallback:
+            _log.debug("No %s bars for %s; trying daily fallback", interval, stock_symbol)
             self.stock_data = get_stock_data_with_retry(stock_symbol, start_date, end_date, '1d')
-            if not self.stock_data.empty:
-                print(f"DEBUG: Got {len(self.stock_data)} daily data points as fallback for {stock_symbol}")
         
         if self.stock_data.empty:
-            print(f"DEBUG: No data returned for {stock_symbol} with interval {interval}")
             self.stock_error_message(stock_symbol, start_date)
         else:
-            print(f"DEBUG: Got {len(self.stock_data)} data points for {stock_symbol}")
             self.stock_data.index = self.stock_data.index.tz_localize(None)
             self.curtime = self.stock_data.index[0]
         
@@ -131,47 +123,48 @@ class StockData:
             self.stock_data.index = self.stock_data.index.tz_localize(None)
     
     def get_price(self):
-        time = self.curtime
-        if time in self.stock_data.index:
-            mid_price = (float(self.stock_data.loc[time, "High"]) + float(self.stock_data.loc[time, "Low"]))/2
-            return mid_price
-        else:
-            # Try to find the closest available timestamp
-            available_times = self.stock_data.index
-            if len(available_times) == 0:
-                print(f"DEBUG: No stock data available for {self.ticker}")
-                return None
-            
-            # Debug: Print available times for first few calls
-            if not hasattr(self, '_debug_printed'):
-                print(f"DEBUG: Available times for {self.ticker}: {available_times[:5].tolist()}...")
-                print(f"DEBUG: Requested time: {time}")
-                self._debug_printed = True
-            
-            # Find the closest time (within reasonable range)
-            time_diff = abs(available_times - time)
-            closest_idx = time_diff.argmin()
-            closest_time = available_times[closest_idx]
-            
-            # Only use closest time if it's within 2 hours (for intraday) or 1 day (for daily)
-            # Check if this is intraday data by looking at the time difference between consecutive points
-            if len(available_times) > 1:
-                time_gap = available_times[1] - available_times[0]
-                is_intraday = time_gap <= timedelta(hours=1)
-            else:
-                is_intraday = True  # Assume intraday if we can't determine
-            
-            max_diff = timedelta(hours=2) if is_intraday else timedelta(days=1)
-            if abs(closest_time - time) <= max_diff:
-                mid_price = (float(self.stock_data.loc[closest_time, "High"]) + float(self.stock_data.loc[closest_time, "Low"]))/2
-                # Debug: print when we're using closest time
-                if abs(closest_time - time) > timedelta(minutes=5):  # Only print if significant difference
-                    print(f"Using closest available time {closest_time} for requested time {time} (diff: {abs(closest_time - time)})")
-                return mid_price
-            else:
-                # Market is truly closed (no data within reasonable range)
-                print(f"No data available within {max_diff} of requested time {time} for {self.ticker}")
-                return None
+        """
+        Mark-to-market at self.curtime using the last bar with timestamp <= curtime (as-of).
+        Avoids the old 'closest bar' logic, which could pick a *future* bar (lookahead bias) and
+        misalign multi-ticker sims when bars don't line up to the second.
+        """
+        if getattr(self, 'stock_data', None) is None or getattr(self.stock_data, 'empty', True):
+            return None
+
+        ts = pd.Timestamp(self.curtime)
+        df = self.stock_data
+        if not df.index.is_monotonic_increasing:
+            df = df.sort_index()
+            self.stock_data = df
+        idx = df.index
+        n = len(idx)
+        if n == 0:
+            return None
+
+        typical_gap = idx[1] - idx[0] if n > 1 else timedelta(days=1)
+        intraday = typical_gap <= timedelta(hours=1)
+        max_stale = timedelta(hours=4) if intraday else timedelta(days=3)
+
+        def _mid(row):
+            return (float(row['High']) + float(row['Low'])) / 2.0
+
+        pos = int(idx.searchsorted(ts, side='right')) - 1
+        if pos >= 0:
+            bar_t = pd.Timestamp(idx[pos])
+            if ts >= bar_t and (ts - bar_t) <= pd.Timedelta(max_stale):
+                return _mid(df.iloc[pos])
+
+        if pos < 0 and n > 0:
+            first_t = pd.Timestamp(idx[0])
+            if first_t >= ts and (first_t - ts) <= pd.Timedelta(max_stale):
+                return _mid(df.iloc[0])
+
+        last_t = pd.Timestamp(idx[-1])
+        if ts > last_t and (ts - last_t) <= pd.Timedelta(max_stale):
+            return _mid(df.iloc[-1])
+
+        _log.debug("No usable bar for %s at %s", self.ticker, ts)
+        return None
     
     def moving_average(self, window='1h'):
         self.stock_data["SMA"] = self.stock_data['Close'].rolling(window=window).mean()

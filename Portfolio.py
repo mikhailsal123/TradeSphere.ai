@@ -1,15 +1,21 @@
 import datetime
+import logging
 from StockData import StockData
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 
+_plog = logging.getLogger(__name__)
+
 class Portfolio:
-    def __init__(self, cash, var1, var2 = None, positions = None, past_trades = None): 
+    def __init__(self, cash, var1, var2=None, positions=None, past_trades=None, yf_interval='1d'):
         self.cash = cash     # Starting cash
-        self.var1 = var1 
+        self.var1 = var1
         self.var2 = var2
+        # Must match simulation bar interval; otherwise intraday sims used daily bars in get_value/PnL
+        self.yf_interval = yf_interval
+        self.allow_daily_fallback = yf_interval == '1d'
 
         if positions is not None:
             self.positions = positions
@@ -29,7 +35,60 @@ class Portfolio:
         self.hedge_margin_available = cash * 0.5  # 50% of portfolio can be used for hedge margin
         self.hedge_trades = []  # Track all hedge transactions
         self.short_positions = {}  # Track short positions for hedging
-    
+        # Long shares opened only via beta hedge (margin); unwind separately from user buys
+        self.hedge_long_positions = {}
+        # One StockData per ticker for this date range — avoids re-downloading Yahoo on every mark
+        self._stock_cache = {}
+
+    def _stock_data(self, ticker):
+        if ticker not in self._stock_cache:
+            self._stock_cache[ticker] = StockData(
+                ticker, self.var1, self.var2, self.yf_interval, self.allow_daily_fallback
+            )
+        return self._stock_cache[ticker]
+
+    def _normalize_timestamp(self, ts):
+        """Coerce timeline keys to datetime so sorting and date math stay consistent."""
+        if ts is None:
+            return datetime.now().replace(microsecond=0)
+        if isinstance(ts, datetime):
+            return ts.replace(microsecond=0)
+        if hasattr(ts, 'to_pydatetime'):
+            return ts.to_pydatetime().replace(microsecond=0)
+        s = str(ts).strip()
+        if ':' in s:
+            try:
+                return datetime.strptime(s[:19], '%Y-%m-%d %H:%M:%S').replace(microsecond=0)
+            except ValueError:
+                pass
+            try:
+                return datetime.strptime(s[:16], '%Y-%m-%d %H:%M').replace(microsecond=0)
+            except ValueError:
+                pass
+        return datetime.strptime(s[:10], '%Y-%m-%d')
+
+    def _sorted_timeline_keys(self):
+        return sorted(self.change_over_time.keys(), key=self._normalize_timestamp)
+
+    def _periods_per_year(self):
+        """
+        Effective number of return observations per year for annualizing bar-to-bar metrics.
+        Uses ~390 minutes per 6.5h U.S. RTH session × 252 trading days for minute-based bars.
+        """
+        yf = getattr(self, 'yf_interval', '1d') or '1d'
+        if yf == '1d':
+            return 252.0
+        if isinstance(yf, str) and yf.endswith('m'):
+            try:
+                bar_m = int(yf[:-1])
+                if bar_m <= 0:
+                    return 252.0
+                bars_per_day = max(1.0, 390.0 / float(bar_m))
+                return 252.0 * bars_per_day
+            except ValueError:
+                return 252.0
+        return 252.0
+
     def get_total_portfolio_value(self, timestamp):
         """Get the total portfolio value (cash + positions) at a given timestamp"""
         return self.get_value(timestamp)
@@ -50,11 +109,12 @@ class Portfolio:
         return True, "Purchase allowed"
     
     def get_value(self, timestamp):
+        timestamp = self._normalize_timestamp(timestamp)
         position_val = self.cash
         market_closed = False
         
         for position in self.positions.keys():
-            sd = StockData(position, self.var1, self.var2)
+            sd = self._stock_data(position)
             sd.curtime = timestamp  # Set the current time for the stock data
             market_price = sd.get_price()
             if(market_price is None):
@@ -65,7 +125,7 @@ class Portfolio:
         # Handle short positions if they exist
         for position, short_shares in self.short_positions.items():
             if short_shares > 0:  # Only process if we have short shares
-                sd = StockData(position, self.var1, self.var2)
+                sd = self._stock_data(position)
                 sd.curtime = timestamp
                 market_price = sd.get_price()
                 if(market_price is None):
@@ -81,13 +141,13 @@ class Portfolio:
         if market_closed:
             if self.change_over_time:
                 # Get the most recent portfolio value
-                last_timestamp = max(self.change_over_time.keys())
+                last_timestamp = max(self.change_over_time.keys(), key=self._normalize_timestamp)
                 position_val = self.change_over_time[last_timestamp]
-                print(f"Market closed at {timestamp}. Using last known value: ${position_val:,.2f}")
+                _plog.debug("Market closed at %s; using last value $%.2f", timestamp, position_val)
             else:
                 # If no previous data, just return cash value
                 position_val = self.cash
-                print(f"Market closed at {timestamp}. No previous data. Using cash value: ${position_val:,.2f}")
+                _plog.debug("Market closed at %s; no prior value, cash $%.2f", timestamp, position_val)
         
         # Track value over time
         self.change_over_time[timestamp] = position_val
@@ -95,8 +155,10 @@ class Portfolio:
 
     def get_PNL(self, timestamp):
         value = self.get_value(timestamp)
-        if value is not None:
-            return value - self.original_value
+        try:
+            return float(value) - float(self.original_value)
+        except (TypeError, ValueError):
+            return 0.0
     
     def get_hedge_margin_balance(self):
         """Get available hedge margin balance"""
@@ -174,13 +236,72 @@ class Portfolio:
             
             return True, f"Hedged: Bought back {shares} {ticker} @ ${price:.2f} (margin released: ${margin_released:.2f})"
         
+        elif trade_type == "buy_margin":
+            # Long on margin: pay half in cash, half backed by hedge margin pool (mirrors short margin)
+            trade_value = price * shares
+            margin_required = trade_value * 0.5
+            cash_required = trade_value - margin_required
+            if self.get_hedge_margin_balance() < margin_required:
+                return False, (
+                    f"Insufficient hedge margin. Need ${margin_required:.2f}, "
+                    f"have ${self.get_hedge_margin_balance():.2f}"
+                )
+            if self.cash < cash_required:
+                return False, f"Insufficient cash for margin buy. Need ${cash_required:.2f}, have ${self.cash:.2f}"
+            self.cash -= cash_required
+            self.hedge_margin_used += margin_required
+            self.positions[ticker] = self.positions.get(ticker, 0) + shares
+            self.hedge_long_positions[ticker] = self.hedge_long_positions.get(ticker, 0) + shares
+            hedge_trade = {
+                'timestamp': timestamp,
+                'ticker': ticker,
+                'action': 'buy_margin',
+                'shares': shares,
+                'price': price,
+                'value': trade_value,
+                'margin_used': margin_required,
+                'cash_paid': cash_required,
+            }
+            self.hedge_trades.append(hedge_trade)
+            return True, f"Hedged: Bought {shares} {ticker} @ ${price:.2f} on margin (cash ${cash_required:.2f}, margin ${margin_required:.2f})"
+
+        elif trade_type == "sell_hedge_long":
+            # Close hedge-initiated long only (not arbitrary user position)
+            trade_value = price * shares
+            hl = self.hedge_long_positions.get(ticker, 0)
+            if hl < shares:
+                return False, f"Insufficient hedge long. Have {hl} hedge long, trying to sell {shares}"
+            pos = self.positions.get(ticker, 0)
+            if pos < shares:
+                return False, f"Insufficient position. Have {pos} shares, trying to sell {shares}"
+            self.cash += trade_value
+            self.positions[ticker] = pos - shares
+            if self.positions[ticker] <= 0:
+                del self.positions[ticker]
+            self.hedge_long_positions[ticker] = hl - shares
+            if self.hedge_long_positions[ticker] <= 0:
+                del self.hedge_long_positions[ticker]
+            margin_released = trade_value * 0.5
+            self.hedge_margin_used = max(0, self.hedge_margin_used - margin_released)
+            hedge_trade = {
+                'timestamp': timestamp,
+                'ticker': ticker,
+                'action': 'sell_hedge_long',
+                'shares': shares,
+                'price': price,
+                'value': trade_value,
+                'margin_released': margin_released,
+            }
+            self.hedge_trades.append(hedge_trade)
+            return True, f"Hedged: Sold {shares} {ticker} @ ${price:.2f} (closed hedge long, margin released ${margin_released:.2f})"
+
         return False, "Invalid trade type"
 
     def summary(self, timestamp):
         print(f"CASH: ${self.cash}")
         print("POSITIONS:")
         for ticker, shares in self.positions.items():
-            sd = StockData(ticker, self.var1, self.var2)
+            sd = self._stock_data(ticker)
             sd.curtime = timestamp  # Set the current time for the stock data
             market_price = sd.get_price()
             print(f"  {ticker}: {shares} shares @ ${market_price}")
@@ -191,15 +312,15 @@ class Portfolio:
         """
         Buy shares of a stock with cash validation to prevent exceeding initial portfolio value.
         """
-        sd = StockData(ticker, self.var1, self.var2)
+        sd = self._stock_data(ticker)
         sd.curtime = timestamp  # Set the current time for the stock data
         market_price = sd.get_price()
         if(market_price is None):
-            print(f"Market closed - cannot get price for {ticker}")
+            _plog.debug("Market closed; no price for %s", ticker)
             return
 
         if(market_price > price):
-            print(f"Order refused. Market Price ${market_price:.2f} higher than limit price ${price:.2f}")
+            _plog.debug("Buy refused: mkt %.2f > limit %.2f", market_price, price)
             return 
         
         # Use the lower of limit price or market price
@@ -208,7 +329,7 @@ class Portfolio:
         # Check if we can afford this purchase
         can_afford, reason = self.can_afford_purchase(execution_price, shares, timestamp)
         if not can_afford:
-            print(f"Purchase denied: {reason}")
+            _plog.debug("Purchase denied: %s", reason)
             return
         
         # Execute the purchase
@@ -228,9 +349,10 @@ class Portfolio:
         }
         self.past_trades.append(trade_record)
         
-        print(f"✅ Bought {shares} shares of {ticker} at ${execution_price:.2f} (Total: ${cost:,.2f})")
-        print(f"   Cash remaining: ${self.cash:,.2f}")
-        print(f"   Portfolio value: ${self.get_total_portfolio_value(timestamp):,.2f}")
+        _plog.debug(
+            "Bought %s sh %s @ %.2f (cost %.2f); cash %.2f",
+            shares, ticker, execution_price, cost, self.cash,
+        )
     
     def get_portfolio_stats(self, timestamp):
         """
@@ -266,23 +388,24 @@ class Portfolio:
         return True, "Portfolio is within valid limits"
     
     def sell(self, ticker, price, shares, timestamp):
-        sd = StockData(ticker, self.var1, self.var2)
+        """Sell at market when price is 0 (simulation market order); otherwise limit-style floor at `price`."""
+        sd = self._stock_data(ticker)
         sd.curtime = timestamp  # Set the current time for the stock data
         market_price = sd.get_price()
         if(market_price is None):
             return
 
-        if(market_price < price):
-            print(f"Order refused. Market Price lower than {price}")
-            return 
-        price = max(price, market_price)
+        if price and market_price < price:
+            _plog.debug("Sell refused: mkt below limit %s", price)
+            return
+        price = max(float(price or 0), market_price)
 
         if self.positions.get(ticker, 0) >= shares:
             self.positions[ticker] -= shares
             self.cash += price * shares
             self.past_trades.append({'action': 'SELL', 'ticker': ticker, 'price': price, 'shares': shares, 'timestamp': timestamp})
         else:
-            print(f"Not enough shares to sell {shares} of {ticker}")
+            _plog.debug("Cannot sell %s sh of %s", shares, ticker)
 
     def plot_portfolio_value(self, title="Portfolio Value Over Time", save_path=None, show_percentage=False, show_plot=True):
         """
@@ -299,7 +422,7 @@ class Portfolio:
             return
         
         # Sort timestamps and values
-        timestamps = sorted(self.change_over_time.keys())
+        timestamps = self._sorted_timeline_keys()
         values = [self.change_over_time[ts] for ts in timestamps]
         
         # Calculate percentage changes if requested
@@ -348,7 +471,10 @@ class Portfolio:
         
         # Highlight constant value periods with different styling
         for start_ts, end_ts, const_val in constant_periods:
-            period_timestamps = [ts for ts in timestamps if start_ts <= ts <= end_ts]
+            period_timestamps = [
+                ts for ts in timestamps
+                if self._normalize_timestamp(start_ts) <= self._normalize_timestamp(ts) <= self._normalize_timestamp(end_ts)
+            ]
             period_values = [self.change_over_time[ts] for ts in period_timestamps]
             plt.plot(period_timestamps, period_values, '--', color='gray', alpha=0.7, linewidth=1)
         
@@ -438,7 +564,7 @@ class Portfolio:
             return
         
         # Sort timestamps and calculate P&L
-        timestamps = sorted(self.change_over_time.keys())
+        timestamps = self._sorted_timeline_keys()
         pnl_values = [self.change_over_time[ts] - self.original_value for ts in timestamps]
         
         # Determine plot styling based on data size
@@ -473,18 +599,22 @@ class Portfolio:
         # Adaptive x-axis labels based on data size
         if num_points <= 20:
             # Small dataset: show all labels
-            plt.xticks(range(len(timestamps)), [ts.strftime('%m/%d %H:%M') for ts in timestamps], rotation=45)
+            plt.xticks(
+                range(len(timestamps)),
+                [self._normalize_timestamp(ts).strftime('%m/%d %H:%M') for ts in timestamps],
+                rotation=45,
+            )
         elif num_points <= 100:
             # Medium dataset: show every few labels
             step = max(1, num_points // 10)
             tick_positions = range(0, len(timestamps), step)
-            tick_labels = [timestamps[i].strftime('%m/%d') for i in tick_positions]
+            tick_labels = [self._normalize_timestamp(timestamps[i]).strftime('%m/%d') for i in tick_positions]
             plt.xticks(tick_positions, tick_labels, rotation=45)
         else:
             # Large dataset: show fewer labels
             step = max(1, num_points // 8)
             tick_positions = range(0, len(timestamps), step)
-            tick_labels = [timestamps[i].strftime('%m/%d') for i in tick_positions]
+            tick_labels = [self._normalize_timestamp(timestamps[i]).strftime('%m/%d') for i in tick_positions]
             plt.xticks(tick_positions, tick_labels, rotation=45)
         
         # Format y-axis as currency
@@ -500,7 +630,7 @@ class Portfolio:
         if show_plot:
             plt.show()
 
-    def calculate_sharpe_ratio(self, risk_free_rate=0.02, period='daily'):
+    def calculate_sharpe_ratio(self, risk_free_rate=0.02, period='auto'):
         """
         Calculate the Sharpe ratio for the portfolio.
         
@@ -509,7 +639,7 @@ class Portfolio:
         
         Args:
             risk_free_rate (float): Annual risk-free rate (default 2% = 0.02)
-            period (str): Period of returns ('daily', 'weekly', 'monthly', 'annual')
+            period (str): 'auto' uses yf_interval to set annualization; or 'daily', 'weekly', etc.
         
         Returns:
             float: Sharpe ratio, or None if insufficient data
@@ -519,7 +649,7 @@ class Portfolio:
             return None
         
         # Get sorted values and calculate returns
-        timestamps = sorted(self.change_over_time.keys())
+        timestamps = self._sorted_timeline_keys()
         values = [self.change_over_time[ts] for ts in timestamps]
         
         # Calculate percentage returns
@@ -536,51 +666,47 @@ class Portfolio:
         # Convert to numpy array for easier calculations
         returns = np.array(returns)
         
-        # Calculate annualized metrics based on period
-        if period == 'daily':
-            periods_per_year = 252  # Trading days per year
+        if period == 'auto':
+            periods_per_year = float(self._periods_per_year())
+        elif period == 'daily':
+            periods_per_year = 252.0
         elif period == 'weekly':
-            periods_per_year = 52
+            periods_per_year = 52.0
         elif period == 'monthly':
-            periods_per_year = 12
+            periods_per_year = 12.0
         elif period == 'annual':
-            periods_per_year = 1
+            periods_per_year = 1.0
         else:
-            print(f"Invalid period '{period}'. Using 'daily'.")
-            periods_per_year = 252
+            print(f"Invalid period '{period}'. Using auto annualization.")
+            periods_per_year = float(self._periods_per_year())
         
-        # Annualize the risk-free rate
-        daily_risk_free_rate = risk_free_rate / periods_per_year
-        
-        # Calculate excess returns
-        excess_returns = returns - daily_risk_free_rate
-        
-        # Calculate Sharpe ratio
-        if np.std(returns) == 0:
+        rf_per_period = risk_free_rate / periods_per_year
+        excess_returns = returns - rf_per_period
+        std = np.std(returns, ddof=1)
+        if std == 0 or not np.isfinite(std):
             print("Portfolio has zero volatility. Sharpe ratio is undefined.")
             return None
         
-        # Annualized Sharpe ratio
-        sharpe_ratio = (np.mean(excess_returns) * periods_per_year) / (np.std(returns) * np.sqrt(periods_per_year))
-        
-        return sharpe_ratio
+        # Annualized Sharpe (bar returns ~ i.i.d. approximation)
+        sharpe_ratio = (np.mean(excess_returns) * periods_per_year) / (std * np.sqrt(periods_per_year))
+        return float(sharpe_ratio) if np.isfinite(sharpe_ratio) else None
     
-    def calculate_volatility(self, period='daily'):
+    def calculate_volatility(self, period='auto'):
         """
-        Calculate the volatility (standard deviation) of portfolio returns.
+        Calculate annualized volatility of portfolio simple returns between marks.
         
         Args:
-            period (str): Period of returns ('daily', 'weekly', 'monthly', 'annual')
+            period (str): 'auto' uses yf_interval for sqrt-scaling; or 'daily', etc.
         
         Returns:
-            float: Volatility, or None if insufficient data
+            float: Annualized volatility as a decimal (e.g. 0.15 for 15%), or None
         """
         if len(self.change_over_time) < 2:
             print("Insufficient data for volatility calculation. Need at least 2 data points.")
             return None
         
         # Get sorted values and calculate returns
-        timestamps = sorted(self.change_over_time.keys())
+        timestamps = self._sorted_timeline_keys()
         values = [self.change_over_time[ts] for ts in timestamps]
         
         # Calculate percentage returns
@@ -597,23 +723,24 @@ class Portfolio:
         # Convert to numpy array
         returns = np.array(returns)
         
-        # Calculate annualized volatility based on period
-        if period == 'daily':
-            periods_per_year = 252  # Trading days per year
+        if period == 'auto':
+            periods_per_year = float(self._periods_per_year())
+        elif period == 'daily':
+            periods_per_year = 252.0
         elif period == 'weekly':
-            periods_per_year = 52
+            periods_per_year = 52.0
         elif period == 'monthly':
-            periods_per_year = 12
+            periods_per_year = 12.0
         elif period == 'annual':
-            periods_per_year = 1
+            periods_per_year = 1.0
         else:
-            print(f"Invalid period '{period}'. Using 'daily'.")
-            periods_per_year = 252
+            periods_per_year = float(self._periods_per_year())
         
-        # Annualized volatility
-        volatility = np.std(returns) * np.sqrt(periods_per_year)
-        
-        return volatility
+        std = np.std(returns, ddof=1)
+        if not np.isfinite(std):
+            return None
+        volatility = std * np.sqrt(periods_per_year)
+        return float(volatility) if np.isfinite(volatility) else None
     
     def calculate_returns_summary(self, risk_free_rate=0.02):
         """Calculate a comprehensive summary of portfolio returns and risk metrics.
@@ -629,7 +756,7 @@ class Portfolio:
             return None
         
         # Get sorted values and calculate returns
-        timestamps = sorted(self.change_over_time.keys())
+        timestamps = self._sorted_timeline_keys()
         values = [self.change_over_time[ts] for ts in timestamps]
         
         # Calculate percentage returns
@@ -645,11 +772,17 @@ class Portfolio:
         
         returns = np.array(returns)
         
-        # Calculate metrics
+        # Calculate metrics (annualization matches bar interval, not hard-coded 252 days of bars)
+        if values[0] == 0:
+            return None
         total_return = (values[-1] - values[0]) / values[0] * 100
-        annualized_return = (1 + total_return/100) ** (252/len(returns)) - 1
-        volatility = np.std(returns) * np.sqrt(252) * 100
-        sharpe_ratio = self.calculate_sharpe_ratio(risk_free_rate)
+        ppy = float(self._periods_per_year())
+        n = len(returns)
+        growth = values[-1] / values[0]
+        annualized_return = (growth ** (ppy / n) - 1) if growth > 0 and n > 0 else None
+        vol_dec = np.std(returns, ddof=1) * np.sqrt(ppy)
+        volatility = vol_dec * 100
+        sharpe_ratio = self.calculate_sharpe_ratio(risk_free_rate, period='auto')
         
         # Calculate maximum drawdown
         peak = values[0]
@@ -663,12 +796,14 @@ class Portfolio:
         
         summary = {
             'total_return_pct': round(total_return, 2),
-            'annualized_return_pct': round(annualized_return * 100, 2),
+            'annualized_return_pct': round(annualized_return * 100, 2) if annualized_return is not None else None,
             'volatility_pct': round(volatility, 2),
-            'sharpe_ratio': round(sharpe_ratio, 3) if sharpe_ratio else None,
+            'sharpe_ratio': round(sharpe_ratio, 3) if sharpe_ratio is not None else None,
             'max_drawdown_pct': round(max_drawdown, 2),
             'data_points': len(values),
-            'time_period_days': (timestamps[-1] - timestamps[0]).days
+            'time_period_days': (
+                self._normalize_timestamp(timestamps[-1]) - self._normalize_timestamp(timestamps[0])
+            ).days
         }
         
         return summary
@@ -695,73 +830,96 @@ class Portfolio:
             return None
         
         try:
-            # Get portfolio data
-            timestamps = sorted(self.change_over_time.keys())
+            from datetime import time as dt_time
+
+            timestamps = self._sorted_timeline_keys()
             portfolio_values = [self.change_over_time[ts] for ts in timestamps]
-            
-            # Get benchmark data with extended period to ensure we have enough data
-            benchmark_start = (timestamps[0] - timedelta(days=5)).strftime('%Y-%m-%d')
-            benchmark_end = (timestamps[-1] + timedelta(days=5)).strftime('%Y-%m-%d')
-            
-            benchmark_data = StockData(benchmark_ticker, benchmark_start, benchmark_end)
-            
-            if benchmark_data.stock_data.empty:
-                print(f"Could not retrieve benchmark data for {benchmark_ticker}")
+            norm_ts = [self._normalize_timestamp(t) for t in timestamps]
+
+            benchmark_start = (norm_ts[0] - timedelta(days=7)).strftime('%Y-%m-%d')
+            benchmark_end = (norm_ts[-1] + timedelta(days=7)).strftime('%Y-%m-%d')
+
+            # Last mark-to-market per calendar day → daily returns vs daily benchmark (avoids ~0 market returns when intraday portfolio steps use the same daily ^GSPC bar).
+            last_by_day = {}
+            for t, v in zip(norm_ts, portfolio_values):
+                last_by_day[t.date()] = v
+            sorted_days = sorted(last_by_day.keys())
+
+            aligned_p = []
+            aligned_b = []
+            ann_ppy = 252.0
+
+            if len(sorted_days) >= 2:
+                bd_daily = StockData(
+                    benchmark_ticker, benchmark_start, benchmark_end, '1d', allow_daily_fallback=True
+                )
+                if not bd_daily.stock_data.empty:
+                    for i in range(1, len(sorted_days)):
+                        d0, d1 = sorted_days[i - 1], sorted_days[i]
+                        v0, v1 = last_by_day[d0], last_by_day[d1]
+                        if v0 == 0:
+                            continue
+                        bd_daily.curtime = datetime.combine(d0, dt_time(16, 0))
+                        p0 = bd_daily.get_price()
+                        bd_daily.curtime = datetime.combine(d1, dt_time(16, 0))
+                        p1 = bd_daily.get_price()
+                        if p0 is not None and p1 is not None and p0 > 0 and p1 > 0:
+                            aligned_p.append((v1 - v0) / v0)
+                            aligned_b.append((p1 - p0) / p0)
+
+            if len(aligned_p) < 3:
+                aligned_p = []
+                aligned_b = []
+                yf = getattr(self, 'yf_interval', '1d') or '1d'
+                v2 = self.var2
+                if v2 is not None and len(str(v2)) == 10:
+                    bd_bar = StockData(
+                        benchmark_ticker, str(self.var1), str(v2), yf, allow_daily_fallback=True
+                    )
+                else:
+                    bd_bar = StockData(
+                        benchmark_ticker, benchmark_start, benchmark_end, '1d', allow_daily_fallback=True
+                    )
+                if bd_bar.stock_data.empty:
+                    print(f"Could not retrieve benchmark data for {benchmark_ticker}")
+                    return None
+                for i in range(1, len(timestamps)):
+                    if portfolio_values[i - 1] == 0:
+                        continue
+                    pr = (portfolio_values[i] - portfolio_values[i - 1]) / portfolio_values[i - 1]
+                    bd_bar.curtime = norm_ts[i - 1]
+                    p0 = bd_bar.get_price()
+                    bd_bar.curtime = norm_ts[i]
+                    p1 = bd_bar.get_price()
+                    if p0 is not None and p1 is not None and p0 > 0 and p1 > 0:
+                        aligned_p.append(pr)
+                        aligned_b.append((p1 - p0) / p0)
+                ann_ppy = float(self._periods_per_year())
+
+            if len(aligned_p) < 3:
+                print(f"Insufficient aligned data points for beta: {len(aligned_p)} (need at least 3)")
                 return None
-            
-            # Align portfolio and benchmark data by matching available trading days
-            aligned_portfolio_returns = []
-            aligned_benchmark_returns = []
-            
-            for i in range(1, len(timestamps)):
-                # Get portfolio return for this period
-                portfolio_return = (portfolio_values[i] - portfolio_values[i-1]) / portfolio_values[i-1]
-                
-                # Try to get benchmark prices for both dates
-                benchmark_data.curtime = timestamps[i-1]
-                price_start = benchmark_data.get_price()
-                
-                benchmark_data.curtime = timestamps[i]
-                price_end = benchmark_data.get_price()
-                
-                # Only include if we have valid benchmark data for both dates
-                if price_start is not None and price_end is not None and price_start > 0:
-                    benchmark_return = (price_end - price_start) / price_start
-                    aligned_portfolio_returns.append(portfolio_return)
-                    aligned_benchmark_returns.append(benchmark_return)
-            
-            # Need at least 3 data points for meaningful beta calculation
-            if len(aligned_portfolio_returns) < 3:
-                print(f"Insufficient aligned data points: {len(aligned_portfolio_returns)} (need at least 3)")
-                return None
-            
-            # Convert to numpy arrays
-            portfolio_returns = np.array(aligned_portfolio_returns)
-            benchmark_returns = np.array(aligned_benchmark_returns)
-            
-            # Calculate covariance and variance
-            covariance = np.cov(portfolio_returns, benchmark_returns)[0, 1]
-            benchmark_variance = np.var(benchmark_returns)
-            
-            # Beta = Covariance(Portfolio, Benchmark) / Variance(Benchmark)
-            if benchmark_variance == 0:
+
+            pr = np.asarray(aligned_p, dtype=float)
+            br = np.asarray(aligned_b, dtype=float)
+            cov = np.cov(pr, br, ddof=1)[0, 1]
+            var_m = np.var(br, ddof=1)
+            if var_m == 0 or not np.isfinite(var_m):
                 print("Benchmark variance is zero - cannot calculate beta")
                 return None
-            
-            beta = covariance / benchmark_variance
-            
-            # Calculate correlation coefficient
-            if len(portfolio_returns) > 1 and np.std(portfolio_returns) > 0 and np.std(benchmark_returns) > 0:
-                correlation = np.corrcoef(portfolio_returns, benchmark_returns)[0, 1]
+            beta = cov / var_m
+
+            std_p = np.std(pr, ddof=1)
+            std_b = np.std(br, ddof=1)
+            if len(pr) > 1 and std_p > 0 and std_b > 0:
+                correlation = np.corrcoef(pr, br)[0, 1]
                 if np.isnan(correlation):
                     correlation = 0.0
             else:
                 correlation = 0.0
-            
-            # Calculate R-squared (coefficient of determination)
+
             r_squared = correlation ** 2
-            
-            # Interpret beta with more nuanced ranges
+
             if beta > 1.5:
                 beta_interpretation = "Very high beta - Portfolio is significantly more volatile than the market"
             elif beta > 1.2:
@@ -774,20 +932,20 @@ class Portfolio:
                 beta_interpretation = "Very low beta - Portfolio shows little correlation with the market"
             else:
                 beta_interpretation = "Negative beta - Portfolio moves opposite to the market"
-            
+
             result = {
-                'beta': round(beta, 3),
-                'correlation': round(correlation, 3),
-                'r_squared': round(r_squared, 3),
+                'beta': round(float(beta), 3),
+                'correlation': round(float(correlation), 3),
+                'r_squared': round(float(r_squared), 3),
                 'benchmark_ticker': benchmark_ticker,
-                'data_points': len(aligned_portfolio_returns),
+                'data_points': len(aligned_p),
                 'interpretation': beta_interpretation,
-                'portfolio_volatility': round(np.std(portfolio_returns) * np.sqrt(252), 3),  # Annualized
-                'benchmark_volatility': round(np.std(benchmark_returns) * np.sqrt(252), 3)  # Annualized
+                'portfolio_volatility': round(float(std_p * np.sqrt(ann_ppy)), 4),
+                'benchmark_volatility': round(float(std_b * np.sqrt(ann_ppy)), 4),
             }
-            
+
             return result
-            
+
         except Exception as e:
             print(f"Error calculating portfolio beta: {str(e)}")
             import traceback

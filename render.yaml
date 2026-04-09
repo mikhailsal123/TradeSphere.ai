@@ -5,12 +5,13 @@ services:
     buildCommand: |
       pip install --upgrade pip setuptools wheel
       pip install --only-binary=all -r requirements.txt
-    startCommand: gunicorn flask_backend:app
+    # Single worker: active_simulations lives in process memory; multiple workers break polling / sim state.
+    # Timeout: long first yfinance pulls or matplotlib plots should not kill the worker mid-request.
+    startCommand: gunicorn -w 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT flask_backend:app
     envVars:
       - key: FLASK_ENV
         value: production
-      - key: PORT
-        value: 10000
+      # Do not set PORT here — Render injects it. A fixed PORT breaks routing if it mismatches the platform.
       # Optional: your Next.js site URL so direct visits to the backend show a "Go to intro" link.
       - key: SHELL_SITE_URL
         sync: false

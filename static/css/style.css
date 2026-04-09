@@ -573,7 +573,7 @@ small {
     flex-shrink: 0;
 }
 
-/* Teeby chat avatars: two assets; visibility toggled by html[data-theme] */
+/* Teeby avatar (single asset) */
 .teeby-chat-avatar-wrap {
     position: relative;
     flex-shrink: 0;
@@ -594,28 +594,17 @@ small {
     border-radius: 50%;
     object-fit: contain;
     object-position: center center;
-    display: none;
+    display: block;
     border: none;
     box-shadow: none;
     vertical-align: top;
 }
 
 .teeby-chat-avatar-wrap--sm .teeby-chat-img {
-    width: 84px;
-    height: 84px;
+    width: 62px;
+    height: 62px;
 }
 
-html[data-theme="light"] .teeby-chat-img--light,
-html[data-theme="dark"] .teeby-chat-img--dark {
-    display: block;
-}
-
-html:not([data-theme]) .teeby-chat-img--light,
-html[data-theme=""] .teeby-chat-img--light {
-    display: block;
-}
-
-/* Meet Teeby card header: copy assets tuned for header gradient */
 .teeby-header-avatar-wrap {
     position: relative;
     flex-shrink: 0;
@@ -631,28 +620,17 @@ html[data-theme=""] .teeby-chat-img--light {
     border-radius: 50%;
     object-fit: contain;
     object-position: center center;
-    display: none;
+    display: block;
     border: none;
     box-shadow: none;
     vertical-align: top;
     flex-shrink: 0;
 }
 
-/* Scoped so Bootstrap’s global img { max-width:100%; height:auto } can’t shrink the header avatar */
 #aiAdvisorCard .card-header .teeby-header-img {
     width: 84px;
     height: 84px;
     max-width: none;
-}
-
-html[data-theme="light"] .teeby-header-img--light,
-html[data-theme="dark"] .teeby-header-img--dark {
-    display: block;
-}
-
-html:not([data-theme]) .teeby-header-img--light,
-html[data-theme=""] .teeby-header-img--light {
-    display: block;
 }
 
 .message-text {

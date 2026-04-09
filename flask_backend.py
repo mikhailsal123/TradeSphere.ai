@@ -1,10 +1,8 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, url_for
 from Portfolio import Portfolio
 from StockData import StockData
 from datetime import datetime, timedelta, date
-from dateutil.relativedelta import relativedelta
 import json
-import random
 import time
 import threading
 import uuid
@@ -18,14 +16,23 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 
 import yfinance as yf
+import logging
 
 # Do not pass requests.Session() into yfinance — current Yahoo backends expect curl_cffi or default handling.
 yf.set_tz_cache_location("/tmp/yfinance_cache")
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+
+
+@app.route("/teeby-avatar.png")
+def teeby_avatar_legacy():
+    """Old URL; canonical file is static/media/teeby-avatar.png."""
+    return redirect(url_for("static", filename="media/teeby-avatar.png"))
 
 
 @app.after_request
@@ -83,15 +90,17 @@ def update_portfolio_state(simulation_id, simulation_data):
             'last_updated': datetime.now().isoformat()
         })
         
-        print(f"✅ Portfolio state updated for simulation {simulation_id}")
-        print(f"   Final positions: {current_portfolio_state['final_positions']}")
-        print(f"   Final value: ${current_portfolio_state['final_metrics'].get('final_value', 'N/A')}")
-        print(f"   Total return: {current_portfolio_state['final_metrics'].get('total_return_pct', 'N/A')}%")
+        logger.debug(
+            "Portfolio state updated sim=%s value=%s return_pct=%s",
+            simulation_id,
+            current_portfolio_state['final_metrics'].get('final_value'),
+            current_portfolio_state['final_metrics'].get('total_return_pct'),
+        )
         
         # Clear conversation history when new simulation starts
         if 'ai_advisor' in globals():
             ai_advisor.clear_conversation_history()
-            print("🧠 Conversation history cleared for new simulation")
+            logger.debug("Conversation history cleared for new simulation")
 
 class AIAdvisor:
     def __init__(self):
@@ -136,14 +145,13 @@ For portfolio analysis, format responses with clear headings, bullet points, and
     def clear_conversation_history(self):
         """Clear the conversation history"""
         self.conversation_history = []
-        print("🧠 Conversation history cleared")
+        logger.debug("Conversation history cleared")
 
     def analyze_portfolio(self, portfolio_data=None, user_question="", simulation_data=None):
         """Analyze portfolio data and provide AI-powered insights with dynamic portfolio memory"""
         try:
-            print(f"Starting AI analysis with token: {cerebras_token[:10] if cerebras_token else 'None'}...")
             if not cerebras_token or cerebras_token == 'YOUR_CEREBRAS_TOKEN':
-                print("No valid token found, using fallback")
+                logger.info("Cerebras token missing; AI advisor using fallback message")
                 return """I'm sorry, but Teeby (the AI portfolio assistant) is not currently available. To enable AI portfolio analysis, please:
 
 1. Get a Cerebras API token from https://www.cerebras.net/
@@ -296,21 +304,6 @@ Here is their current portfolio state:
 
 Please provide a focused analysis that directly addresses their question. Be specific about their actual holdings, values, and performance metrics. Keep it concise and relevant to what they asked."""
 
-            # Call Cerebras API
-            print(f"Making API call to Cerebras...")
-            
-            # Debug: Print what we're sending to AI
-            print(f"\n{'='*50}")
-            print(f"REQUEST TO AI:")
-            print(f"{'='*50}")
-            print(f"User Question: {user_question}")
-            if 'context' in locals():
-                print(f"Context Length: {len(context)} characters")
-            print(f"User Message Length: {len(user_message)} characters")
-            print(f"Model: llama3.1-8b")
-            print(f"Max Tokens: 1500")
-            print(f"{'='*50}\n")
-            
             headers = {
                 "Authorization": f"Bearer {cerebras_token}",
                 "Content-Type": "application/json"
@@ -327,20 +320,10 @@ Please provide a focused analysis that directly addresses their question. Be spe
             }
             
             response = requests.post(cerebras_api_url, headers=headers, json=payload, timeout=30)
-            print(f"API Response Status: {response.status_code}")
             response.raise_for_status()
-            
             result = response.json()
-            print(f"API Success! Returning AI response...")
-            
-            # Debug: Print the full AI response
             ai_response = result['choices'][0]['message']['content']
-            print(f"\n{'='*50}")
-            print(f"AI RESPONSE DEBUG:")
-            print(f"{'='*50}")
-            print(ai_response)
-            print(f"{'='*50}\n")
-            
+            logger.debug("Cerebras response length=%s", len(ai_response))
             return ai_response
             
         except Exception as e:
@@ -580,12 +563,16 @@ class SimulationManager:
         """Run the portfolio simulation"""
         try:
             self.is_running = True
-            print(f"DEBUG: Starting simulation with trading rules: {self.trading_rules}")
-            print(f"DEBUG: Number of trading rule groups: {len(self.trading_rules)}")
+            logger.info("Simulation %s start (rules groups=%s)", self.simulation_id, len(self.trading_rules))
             
             freq = self.trading_frequency
             bar_minutes_map = {'1m': 1, '5m': 5, '15m': 15, '60m': 60, 'intraday': 60}
             is_intraday = freq in bar_minutes_map
+            if is_intraday:
+                _bm = bar_minutes_map[freq]
+                yf_interval = f'{_bm}m' if _bm < 60 else '60m'
+            else:
+                yf_interval = '1d'
             
             # Initialize portfolio and stock data
             currtime = datetime.strptime(self.start_date, '%Y-%m-%d')
@@ -593,7 +580,7 @@ class SimulationManager:
             # If start date is a weekend, move to next weekday
             while currtime.weekday() >= 5:  # Saturday=5, Sunday=6
                 currtime += timedelta(days=1)
-                print(f"Start date was weekend, moving to {currtime.strftime('%Y-%m-%d')}")
+                logger.debug("Start date was weekend, moving to %s", currtime.strftime('%Y-%m-%d'))
             
             if is_intraday:
                 currtime = currtime.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -602,26 +589,33 @@ class SimulationManager:
             today_d = date.today()
             today_dt = datetime(today_d.year, today_d.month, today_d.day)
             dh = getattr(self, 'duration_hours', None)
-            if is_intraday:
-                if dh is not None and freq in ('1m', '5m', '15m'):
-                    pad_days = max(21, min(90, int(dh) * 4 + 20))
-                elif freq == '60m':
+            if is_intraday and dh is not None and freq in ('1m', '5m', '15m'):
+                # Hour-capped intraday: only fetch through the simulated window. Large pad_days + max(..., today)
+                # produced multi-week Yahoo ranges and broke 1m even though the sim steps ≤6h (see bar cap below).
+                cap_h = {'1m': 6, '5m': 12, '15m': 24}[freq]
+                h = max(1, min(cap_h, int(round(float(dh)))))
+                end_dt = currtime + timedelta(hours=h) + timedelta(days=1)
+            elif is_intraday:
+                if freq == '60m':
                     pad_days = max(21, int(self.duration_days) * 12 + 21)
                 else:
                     pad_days = max(30, int(self.duration_days) * 14 + 30)
+                end_candidate = currtime + timedelta(days=pad_days)
+                end_dt = max(end_candidate, today_dt)
             else:
                 pad_days = int(self.duration_days) + 35
-            end_candidate = currtime + timedelta(days=pad_days)
-            end_dt = max(end_candidate, today_dt)
+                end_candidate = currtime + timedelta(days=pad_days)
+                end_dt = max(end_candidate, today_dt)
+            if end_dt.date() <= currtime.date():
+                end_dt = currtime + timedelta(days=1)
             end_date_str = end_dt.strftime('%Y-%m-%d')
             
-            port = Portfolio(self.initial_cash, start_date_str, end_date_str)
+            port = Portfolio(self.initial_cash, start_date_str, end_date_str, yf_interval=yf_interval)
             
             # Initialize stock data with appropriate interval
             data = {}
             if is_intraday:
                 bar_m = bar_minutes_map[freq]
-                yf_interval = f'{bar_m}m' if bar_m < 60 else '60m'
                 if dh is not None and freq in ('1m', '5m', '15m'):
                     cap = {'1m': 6, '5m': 12, '15m': 24}[freq]
                     h = max(1, min(cap, int(round(float(dh)))))
@@ -633,72 +627,92 @@ class SimulationManager:
                     total_intervals = max(1, d * bars_per_day)
                 interval_delta = timedelta(minutes=bar_m)
             else:
-                yf_interval = '1d'
                 total_intervals = self.duration_days
                 interval_delta = timedelta(days=1)
             
             self.total_result_steps = total_intervals + 1
             
             for ticker in self.tickers.keys():
-                data[ticker] = StockData(ticker, start_date_str, end_date_str)
-                data[ticker].get_stock_data(ticker, start_date_str, end_date_str, yf_interval)
+                data[ticker] = StockData(
+                    ticker, start_date_str, end_date_str, yf_interval, allow_daily_fallback=(yf_interval == '1d')
+                )
+
+            rule_and_hedge = set(self.trading_rules.keys())
+            if self.beta_hedge_enabled:
+                rule_and_hedge.add('VOO')
+            for t in rule_and_hedge:
+                if t not in data:
+                    data[t] = StockData(
+                        t, start_date_str, end_date_str, yf_interval, allow_daily_fallback=(yf_interval == '1d')
+                    )
+
+            # If Yahoo only has daily rows (midnight index) but we step by minutes, every minute maps to the
+            # same bar — flat prices at 00:00, 00:01, ...  Detect and step by calendar day instead.
+            data_is_daily = False
+            for ticker in list(data.keys()):
+                idx = data[ticker].stock_data.index
+                if len(idx) < 2:
+                    if is_intraday and len(idx) == 1:
+                        data_is_daily = True
+                    continue
+                gap0 = idx[1] - idx[0]
+                if gap0 >= timedelta(hours=12):
+                    data_is_daily = True
+                    break
+            report_intraday_times = bool(is_intraday and not data_is_daily)
+            if is_intraday and data_is_daily:
+                logger.warning(
+                    'Intraday mode requested but bar spacing is daily; stepping by calendar day. '
+                    'Use a recent start date within Yahoo intraday window for per-minute prices.'
+                )
+                interval_delta = timedelta(days=1)
+                total_intervals = max(1, int(self.duration_days))
+                self.total_result_steps = total_intervals + 1
             
             # Initial purchases with real market prices using the same stock data objects
-            print(f"Starting with cash: ${port.cash:,.2f}")
             for ticker, shares in self.tickers.items():
-                # Use the first available trading day from the stock data
                 if not data[ticker].stock_data.empty:
                     first_trading_day = data[ticker].stock_data.index[0]
                     data[ticker].curtime = first_trading_day
                     current_price = data[ticker].get_price()
-                    
-                    print(f"First trading day for {ticker}: {first_trading_day}")
-                    print(f"Price on first trading day: ${current_price}")
-                    
                     if current_price is not None:
-                        # Buy at exact market price to ensure execution
-                        purchase_price = current_price
-                        port.buy(ticker, purchase_price, shares, first_trading_day)
-                        print(f"Initial purchase: {shares} shares of {ticker} at ${purchase_price:.2f}")
-                        print(f"  Cash after purchase: ${port.cash:,.2f}")
-                        print(f"  Positions after purchase: {port.positions}")
+                        port.buy(ticker, current_price, shares, first_trading_day)
                     else:
-                        print(f"Warning: Could not get price for {ticker} on {first_trading_day}, skipping initial purchase")
+                        logger.warning("No initial price for %s on %s; skipping purchase", ticker, first_trading_day)
                 else:
-                    print(f"Warning: No stock data available for {ticker}, skipping initial purchase")
-            
-            print(f"Final cash after all purchases: ${port.cash:,.2f}")
-            print(f"Final positions after all purchases: {port.positions}")
+                    logger.warning("No stock data for %s; skipping initial purchase", ticker)
             
             first_bars = [data[t].stock_data.index[0] for t in self.tickers if not data[t].stock_data.empty]
             if first_bars:
+                # Align to Yahoo's first bar for the loaded range (do not force 9:30 — that can miss
+                # the index and make get_price fail for some tickers on every step).
                 currtime = min(first_bars)
-                if is_intraday:
-                    currtime = currtime.replace(hour=9, minute=30, second=0, microsecond=0)
+                if hasattr(currtime, 'to_pydatetime'):
+                    currtime = currtime.to_pydatetime()
+                currtime = currtime.replace(second=0, microsecond=0)
                 for t in self.tickers:
                     if not data[t].stock_data.empty:
                         data[t].curtime = currtime
             
-            # Calculate portfolio value right after initial purchases
+            # Calculate portfolio value right after initial purchases (single mark; PnL from that value)
             initial_portfolio_value = port.get_value(currtime)
-            print(f"Portfolio value after initial purchases: ${initial_portfolio_value:,.2f}")
+            initial_pnl = round(float(initial_portfolio_value) - float(port.original_value), 2)
             
             # Record initial state (after purchases) as first result
-            initial_interval_label = 'Day 0 (Initial)' if not is_intraday else 'Day 0, Initial'
+            initial_interval_label = 'Day 0 (Initial)' if not report_intraday_times else 'Day 0, Initial'
             initial_result = {
                 'day': 0,
                 'interval_label': initial_interval_label,
-                'date': currtime.strftime('%Y-%m-%d %H:%M') if is_intraday else currtime.strftime('%Y-%m-%d'),
+                'date': currtime.strftime('%Y-%m-%d %H:%M') if report_intraday_times else currtime.strftime('%Y-%m-%d'),
                 'prices': {ticker: data[ticker].get_price() for ticker in self.tickers.keys() if data[ticker].get_price() is not None},
                 'portfolio_value': initial_portfolio_value,
                 'trades': [],
                 'positions': port.positions.copy(),
-                'cash': port.cash,
-                'pnl': port.get_PNL(currtime),
+                'cash': round(float(port.cash), 2),
+                'pnl': initial_pnl,
                 'hedge_margin_balance': port.get_hedge_margin_balance(),
             }
             self.results.append(initial_result)
-            print(f"Recorded initial result: positions={port.positions}, value=${initial_portfolio_value:,.2f}")
             
             for i in range(total_intervals):
                 if not self.is_running:  # Check if simulation was stopped
@@ -707,8 +721,8 @@ class SimulationManager:
                 # Move to next interval
                 currtime = currtime + interval_delta
                 
-                # Update current time for all stock data objects
-                for ticker in self.tickers.keys():
+                # Update current time for all loaded symbols (portfolio, rules, hedge)
+                for ticker in data.keys():
                     data[ticker].curtime = currtime
                 
                 # Get current prices for portfolio tickers
@@ -718,124 +732,93 @@ class SimulationManager:
                     if price is not None:
                         current_prices[ticker] = price
                 
-                # Also fetch VOO price for hedging if beta hedge is enabled
                 if self.beta_hedge_enabled and 'VOO' not in current_prices:
-                    voo_price = self._get_voo_price(currtime)
-                    if voo_price:
-                        current_prices['VOO'] = voo_price
+                    if 'VOO' in data and not data['VOO'].stock_data.empty:
+                        vp = data['VOO'].get_price()
+                        if vp is not None:
+                            current_prices['VOO'] = vp
+                    if current_prices.get('VOO') is None:
+                        voo_price = self._get_voo_price(currtime)
+                        if voo_price:
+                            current_prices['VOO'] = voo_price
                 
-                # Get current prices for trading rule tickers (if not already fetched)
                 for ticker in self.trading_rules.keys():
                     if ticker not in current_prices:
-                        # Fetch real stock data for trading rule tickers
-                        try:
-                            temp_data = StockData(ticker, start_date_str, end_date_str)
-                            temp_data.get_stock_data(ticker, start_date_str, end_date_str, yf_interval)
-                            temp_data.curtime = currtime
-                            price = temp_data.get_price()
-                            if price is not None:
-                                current_prices[ticker] = price
-                                print(f"DEBUG: Fetched real price for {ticker}: ${price}")
-                            else:
-                                print(f"DEBUG: No price available for {ticker}, using dummy price")
-                                current_prices[ticker] = 100.0  # Fallback dummy price
-                        except Exception as e:
-                            print(f"DEBUG: Error fetching data for {ticker}: {e}, using dummy price")
-                            current_prices[ticker] = 100.0  # Fallback dummy price
+                        if ticker in data and not data[ticker].stock_data.empty:
+                            p = data[ticker].get_price()
+                            current_prices[ticker] = p if p is not None else 100.0
+                        else:
+                            current_prices[ticker] = 100.0
                 
                 # Check trading conditions and execute trades
                 trades_executed = []
                 rules_to_remove = []  # Track one-time rules that should be removed
                 
-                print(f"DEBUG: Processing {len(self.trading_rules)} trading rule groups")
                 for ticker, rules in self.trading_rules.items():
-                    print(f"DEBUG: Processing {len(rules)} rules for {ticker}")
                     try:
                         if ticker in current_prices:
                             price = current_prices[ticker]
-                            print(f"DEBUG: Price for {ticker}: ${price}")
                             for rule_index, rule in enumerate(rules):
-                                print(f"DEBUG: Processing rule: {rule}")
                                 rule_executed = False
                                 
                                 # Handle sell rules
                                 if rule['action'] == 'sell':
                                     if rule['condition'] == 'greater_than' and price > rule['threshold']:
                                         if port.positions.get(ticker, 0) >= rule['shares']:
-                                            port.sell(ticker, price, rule['shares'], currtime)
+                                            # Limit 0 = market sell at snapshot (avoids refusing when Portfolio.get_price differs slightly from current_prices)
+                                            port.sell(ticker, 0, rule['shares'], currtime)
                                             trades_executed.append(f"Sold {rule['shares']} {ticker} @ ${price:.2f}")
                                             rule_executed = True
                                     elif rule['condition'] == 'less_than' and price < rule['threshold']:
                                         if port.positions.get(ticker, 0) >= rule['shares']:
-                                            port.sell(ticker, price, rule['shares'], currtime)
+                                            port.sell(ticker, 0, rule['shares'], currtime)
                                             trades_executed.append(f"Sold {rule['shares']} {ticker} @ ${price:.2f}")
                                             rule_executed = True
                                 
                                 # Handle buy rules
                                 elif rule['action'] == 'buy':
                                     if rule['condition'] == 'greater_than' and price > rule['threshold']:
-                                        # Check if we have enough cash to buy
                                         cost = price * rule['shares']
                                         if port.cash >= cost:
-                                            # Additional check: ensure portfolio value doesn't exceed initial cash
-                                            current_portfolio_value = port.get_total_portfolio_value(currtime)
-                                            if current_portfolio_value <= port.original_value:
-                                                port.buy(ticker, price + 1, rule['shares'], currtime)  # Add small buffer to ensure purchase
-                                                trades_executed.append(f"Bought {rule['shares']} {ticker} @ ${price:.2f}")
-                                                rule_executed = True
-                                            else:
-                                                print(f"DEBUG: Buy order skipped - portfolio value (${current_portfolio_value:,.2f}) exceeds initial cash (${port.original_value:,.2f})")
+                                            # Cash-only check; do not cap on mark-to-market vs initial cash (that blocked every buy after gains)
+                                            port.buy(ticker, price + 1, rule['shares'], currtime)
+                                            trades_executed.append(f"Bought {rule['shares']} {ticker} @ ${price:.2f}")
+                                            rule_executed = True
                                     elif rule['condition'] == 'less_than' and price < rule['threshold']:
-                                        # Check if we have enough cash to buy
                                         cost = price * rule['shares']
                                         if port.cash >= cost:
-                                            # Additional check: ensure portfolio value doesn't exceed initial cash
-                                            current_portfolio_value = port.get_total_portfolio_value(currtime)
-                                            if current_portfolio_value <= port.original_value:
-                                                port.buy(ticker, price + 1, rule['shares'], currtime)  # Add small buffer to ensure purchase
-                                                trades_executed.append(f"Bought {rule['shares']} {ticker} @ ${price:.2f}")
-                                                rule_executed = True
-                                            else:
-                                                print(f"DEBUG: Buy order skipped - portfolio value (${current_portfolio_value:,.2f}) exceeds initial cash (${port.original_value:,.2f})")
+                                            port.buy(ticker, price + 1, rule['shares'], currtime)
+                                            trades_executed.append(f"Bought {rule['shares']} {ticker} @ ${price:.2f}")
+                                            rule_executed = True
                                 
                                 # If rule executed and it's a one-time rule, mark it for removal
                                 if rule_executed and rule.get('one_time', False):
                                     rules_to_remove.append((ticker, rule_index))
-                                    print(f"DEBUG: One-time rule executed and marked for removal: {ticker} rule {rule_index}")
                                     
                         else:
-                            print(f"DEBUG: No price available for {ticker}")
+                            logger.debug("No price for rule ticker %s", ticker)
                     except Exception as e:
-                        print(f"ERROR: Error processing trading rules for {ticker}: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        logger.exception("Trading rules error for %s: %s", ticker, e)
                         continue
                 
                 # Remove one-time rules that were executed (in reverse order to maintain indices)
                 for ticker, rule_index in reversed(rules_to_remove):
                     if ticker in self.trading_rules and rule_index < len(self.trading_rules[ticker]):
-                        removed_rule = self.trading_rules[ticker].pop(rule_index)
-                        print(f"DEBUG: Removed one-time rule: {removed_rule}")
-                        # If no more rules for this ticker, remove the ticker entirely
+                        self.trading_rules[ticker].pop(rule_index)
                         if not self.trading_rules[ticker]:
                             del self.trading_rules[ticker]
-                            print(f"DEBUG: Removed ticker {ticker} from trading rules (no more rules)")
                 
-                # Beta hedging logic - run after all trading rules
+                # Beta hedging: every interval, rebalance VOO hedge toward target (delta trades)
                 if self.beta_hedge_enabled:
-                    print(f"DEBUG: Running beta hedge for day {i + 1}")
                     hedge_trades = self._execute_beta_hedge(port, currtime, current_prices, data)
                     trades_executed.extend(hedge_trades)
-                    if hedge_trades:
-                        print(f"DEBUG: Added {len(hedge_trades)} hedge trades: {hedge_trades}")
-                    else:
-                        print(f"DEBUG: No hedge trades generated for day {i + 1}")
                 
-                # Get current portfolio value
+                # Mark-to-market once per interval; PnL vs initial cash (not a second get_value via get_PNL)
                 current_value = port.get_value(currtime)
+                interval_pnl = round(float(current_value) - float(port.original_value), 2)
                 
                 # Store interval result with meaningful labels
-                if not is_intraday:
+                if not report_intraday_times:
                     interval_label = f"Day {i + 1}"
                 else:
                     bpd = max(1, (6 * 60) // bar_minutes_map[freq])
@@ -846,24 +829,18 @@ class SimulationManager:
                 daily_result = {
                     'day': i + 1,
                     'interval_label': interval_label,
-                    'date': currtime.strftime('%Y-%m-%d %H:%M') if is_intraday else currtime.strftime('%Y-%m-%d'),
+                    'date': currtime.strftime('%Y-%m-%d %H:%M') if report_intraday_times else currtime.strftime('%Y-%m-%d'),
                     'prices': current_prices.copy(),
                     'portfolio_value': current_value,
                     'trades': trades_executed.copy(),
                     'positions': port.positions.copy(),
-                    'cash': port.cash,
-                    'pnl': port.get_PNL(currtime),
+                    'cash': round(float(port.cash), 2),
+                    'pnl': interval_pnl,
                     'one_time_rules_executed': len(rules_to_remove),  # Track how many one-time rules were executed
                     'hedge_margin_balance': port.get_hedge_margin_balance()  # Track available hedge margin
                 }
                 
-                # Debug output for trades
-                if trades_executed:
-                    print(f"DEBUG: Day {i + 1} trades: {trades_executed}")
                 self.results.append(daily_result)
-                
-                # Small delay for real-time effect
-                time.sleep(0.1)
             
             # Calculate final metrics
             if self.results:
@@ -873,11 +850,6 @@ class SimulationManager:
                 
                 # Calculate return based on actual starting portfolio value
                 total_return = (final_value - initial_value) / initial_value * 100 if initial_value > 0 else 0
-                
-                print(f"Final metrics calculation:")
-                print(f"  Initial portfolio value: ${initial_value:,.2f}")
-                print(f"  Final portfolio value: ${final_value:,.2f}")
-                print(f"  Total return: {total_return:.2f}%")
                 
                 sharpe_ratio = port.calculate_sharpe_ratio()
                 volatility = port.calculate_volatility()
@@ -891,12 +863,10 @@ class SimulationManager:
                     total_hedge_margin_used = sum(trade.get('margin_used', 0) for trade in port.hedge_trades) if hasattr(port, 'hedge_trades') else 0
                     hedge_margin_remaining = port.get_hedge_margin_balance() if hasattr(port, 'get_hedge_margin_balance') else 0
                 except Exception as e:
-                    print(f"DEBUG: Error calculating hedge statistics: {e}")
+                    logger.debug("Hedge statistics error: %s", e)
                     hedge_trades_count = 0
                     total_hedge_margin_used = 0
                     hedge_margin_remaining = 0
-                
-                print(f"DEBUG: Creating final_metrics - Final value: ${final_value}, Total return: {total_return}%")
                 
                 # Calculate hedge impact analysis
                 hedge_analysis = self._calculate_hedge_impact(port) if self.beta_hedge_enabled else None
@@ -905,8 +875,8 @@ class SimulationManager:
                     'total_return_pct': round(total_return, 2),
                     'final_value': round(final_value, 2),
                     'total_pnl': round(final_value - self.initial_cash, 2),
-                    'sharpe_ratio': round(sharpe_ratio, 3) if sharpe_ratio else None,
-                    'volatility_pct': round(volatility * 100, 2) if volatility else None,
+                    'sharpe_ratio': round(sharpe_ratio, 3) if sharpe_ratio is not None else None,
+                    'volatility_pct': round(volatility * 100, 2) if volatility is not None else None,
                     'total_trades': len(port.past_trades),
                     'final_positions': port.positions,
                     'beta': beta_result['beta'] if beta_result else None,
@@ -918,8 +888,6 @@ class SimulationManager:
                     'hedge_trades': port.hedge_trades if hasattr(port, 'hedge_trades') else [],
                     'hedge_analysis': hedge_analysis  # New comprehensive hedge analysis
                 }
-                
-                print(f"DEBUG: Final metrics created successfully: {self.final_metrics}")
             
             self.is_complete = True
             self.is_running = False
@@ -933,12 +901,10 @@ class SimulationManager:
                 'trading_rules': self.trading_rules
             })
             
-            print(f"Simulation {self.simulation_id} completed successfully")
+            logger.info("Simulation %s completed", self.simulation_id)
             
         except Exception as e:
-            print(f"ERROR: Simulation failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Simulation %s failed: %s", self.simulation_id, e)
             
             # Create basic final_metrics even if simulation failed
             if not hasattr(self, 'final_metrics'):
@@ -959,7 +925,7 @@ class SimulationManager:
                     'hedge_margin_remaining': 0.0,
                     'hedge_trades': []
                 }
-                print(f"DEBUG: Created fallback final_metrics due to error")
+                logger.debug("Created fallback final_metrics after error")
             
             self.error = str(e)
             self.is_complete = True
@@ -968,66 +934,34 @@ class SimulationManager:
     def _get_voo_price(self, currtime):
         """Get VOO price with robust error handling and fallback logic"""
         try:
-            import yfinance as yf
-            
-            # For daily simulations, just use the date part
             current_date = currtime.date()
-            
-            # Try to get recent VOO data (last 10 trading days)
-            end_date = current_date + timedelta(days=1)  # Include current date
-            start_date = current_date - timedelta(days=14)  # Go back 2 weeks
-            
-            print(f"DEBUG: Fetching VOO price for {current_date} (range: {start_date} to {end_date})")
-            
-            # Use yfinance directly for more reliable data fetching
+            end_date = current_date + timedelta(days=1)
+            start_date = current_date - timedelta(days=14)
             voo_ticker = yf.Ticker('VOO')
             voo_data = voo_ticker.history(start=start_date, end=end_date, interval='1d')
-            
             if voo_data.empty:
-                print(f"DEBUG: No VOO data available for date range {start_date} to {end_date}")
+                logger.debug("No VOO daily data %s to %s", start_date, end_date)
                 return None
-            
-            # Find the closest trading day to our current date
             available_dates = [d.date() for d in voo_data.index]
-            print(f"DEBUG: Available VOO trading dates: {available_dates}")
-            
-            # Try exact date match first
             if current_date in available_dates:
                 row = voo_data[voo_data.index.date == current_date].iloc[0]
-                price = (row['High'] + row['Low']) / 2
-                print(f"DEBUG: Found exact VOO price for {current_date}: ${price:.2f}")
-                return float(price)
-            
-            # Find closest trading day (within 5 days)
+                return float((row['High'] + row['Low']) / 2)
             date_diffs = [(abs((d - current_date).days), d) for d in available_dates]
             date_diffs.sort()
-            
             for days_diff, trading_date in date_diffs:
-                if days_diff <= 5:  # Only use dates within 5 days
+                if days_diff <= 5:
                     row = voo_data[voo_data.index.date == trading_date].iloc[0]
-                    price = (row['High'] + row['Low']) / 2
-                    print(f"DEBUG: Using VOO price from {trading_date} (closest to {current_date}): ${price:.2f}")
-                    return float(price)
-            
-            print(f"DEBUG: No recent VOO data within 5 days of {current_date}")
+                    return float((row['High'] + row['Low']) / 2)
             return None
-            
         except Exception as e:
-            print(f"DEBUG: Error fetching VOO price: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.debug("VOO price fetch failed: %s", e)
             return None
     
     def _calculate_hedge_impact(self, port):
         """Calculate the impact of hedging by comparing hedged vs non-hedged performance"""
         try:
-            print("DEBUG: Calculating hedge impact analysis...")
-            
-            # Separate regular trades from hedge trades
             regular_trades = [trade for trade in port.past_trades if not trade.get('is_hedge', False)]
             hedge_trades = port.hedge_trades if hasattr(port, 'hedge_trades') else []
-            
-            print(f"DEBUG: Regular trades: {len(regular_trades)}, Hedge trades: {len(hedge_trades)}")
             
             # Calculate what portfolio would have been without hedging
             non_hedged_value = self._simulate_without_hedging(port, regular_trades)
@@ -1062,13 +996,10 @@ class SimulationManager:
                 'hedge_cost': self._calculate_hedge_cost(hedge_trades)
             }
             
-            print(f"DEBUG: Hedge analysis completed: {hedge_analysis}")
             return hedge_analysis
             
         except Exception as e:
-            print(f"DEBUG: Error calculating hedge impact: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.debug("Hedge impact calculation failed: %s", e)
             return {
                 'error': str(e),
                 'non_hedged_value': 0,
@@ -1110,7 +1041,7 @@ class SimulationManager:
             return value
             
         except Exception as e:
-            print(f"DEBUG: Error simulating without hedging: {e}")
+            logger.debug("Simulate without hedging failed: %s", e)
             return self.initial_cash
     
     def _calculate_portfolio_beta_without_hedging(self, port, regular_trades):
@@ -1128,7 +1059,7 @@ class SimulationManager:
             return beta_result
             
         except Exception as e:
-            print(f"DEBUG: Error calculating beta without hedging: {e}")
+            logger.debug("Beta without hedging failed: %s", e)
             return {'beta': 0, 'interpretation': 'Unknown', 'correlation': 0}
     
     def _calculate_volatility_without_hedging(self, port, regular_trades):
@@ -1145,7 +1076,7 @@ class SimulationManager:
             return estimated_original_volatility
             
         except Exception as e:
-            print(f"DEBUG: Error calculating volatility without hedging: {e}")
+            logger.debug("Volatility without hedging failed: %s", e)
             return 0
     
     def _calculate_hedge_effectiveness(self, hedge_pnl, beta_reduction):
@@ -1180,151 +1111,141 @@ class SimulationManager:
             return round(total_cost, 2)
             
         except Exception as e:
-            print(f"DEBUG: Error calculating hedge cost: {e}")
+            logger.debug("Hedge cost failed: %s", e)
             return 0
     
     def _execute_beta_hedge(self, port, currtime, current_prices, data):
-        """Execute bidirectional beta hedging: short VOO for positive beta, buy VOO for negative beta"""
+        """
+        Per-interval beta hedge: move VOO exposure toward target using delta trades only.
+        Positive beta → net short VOO (add short / trim by buying back).
+        Negative beta → cover any VOO short first, then long VOO on margin; trim by selling hedge long.
+        Near-zero beta → unwind shorts and hedge longs.
+        """
+        out = []
+        beta_th = 0.01
         try:
-            # Calculate current portfolio beta
             beta_result = port.calculate_portfolio_beta()
             if not beta_result or 'beta' not in beta_result:
                 return []
-            
-            current_beta = beta_result['beta']
-            print(f"DEBUG: Current portfolio beta: {current_beta}")
-            
-            # Only hedge if beta is significant (absolute value > 0.01)
-            if abs(current_beta) <= 0.01:
-                print(f"DEBUG: Beta {current_beta:.3f} too low for hedging (threshold: 0.01)")
-                return []
-            
-            # Get VOO price
+
+            beta = float(beta_result['beta'])
+
             voo_price = current_prices.get('VOO')
             if not voo_price:
                 voo_price = self._get_voo_price(currtime)
                 if voo_price:
                     current_prices['VOO'] = voo_price
-            
             if not voo_price:
-                print("DEBUG: VOO price not available for hedging")
+                logger.debug("VOO price not available for hedging at %s", currtime)
                 return []
-            
-            # Calculate how much VOO to trade to hedge the beta towards 0
-            # For positive beta: short VOO to reduce market exposure
-            # For negative beta: buy VOO to increase market exposure back to neutral
-            portfolio_value = port.get_value(currtime)
-            
-            # Calculate shares needed to neutralize beta
-            # Since VOO has beta ≈ 1, we need: portfolio_value * current_beta / voo_price
-            shares_to_trade = (portfolio_value * current_beta) / voo_price
-            print(f"DEBUG: Portfolio value: ${portfolio_value:.2f}")
-            print(f"DEBUG: Current beta: {current_beta:.3f}")
-            print(f"DEBUG: VOO price: ${voo_price:.2f}")
-            print(f"DEBUG: Calculated shares to trade: {shares_to_trade:.1f}")
-            
-            # Determine hedge direction based on beta sign
-            if current_beta > 0:
-                hedge_action = 'short'
-                print(f"DEBUG: POSITIVE BETA - Will SHORT {abs(shares_to_trade):.1f} VOO shares to reduce market exposure")
+
+            pv = float(port.get_value(currtime))
+            max_hedge_value = pv * 0.5
+            max_sh = max(0, int(max_hedge_value / voo_price))
+
+            cur_short = port.short_positions.get('VOO', 0)
+            cur_hlong = port.hedge_long_positions.get('VOO', 0)
+
+            # Flatten hedge when beta is negligible
+            if abs(beta) <= beta_th:
+                if cur_short > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, cur_short, currtime, 'buy')
+                    out.append(f"Unwind (buy back short): {msg}" if ok else f"Unwind short failed: {msg}")
+                cur_hlong = port.hedge_long_positions.get('VOO', 0)
+                if cur_hlong > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, cur_hlong, currtime, 'sell_hedge_long')
+                    out.append(f"Unwind (sell hedge long): {msg}" if ok else f"Unwind long failed: {msg}")
+                return out
+
+            want_short = 0
+            want_long = 0
+            if beta > beta_th:
+                want_short = min(max_sh, int((pv * beta) / voo_price))
             else:
-                hedge_action = 'buy'
-                print(f"DEBUG: NEGATIVE BETA - Will BUY {abs(shares_to_trade):.1f} VOO shares on margin to increase market exposure")
-            
-            # Round to whole shares and add safety limits
-            shares_to_trade = int(abs(shares_to_trade))  # Always use absolute value, direction determined by hedge_action
-            
-            # Safety check: don't hedge more than 50% of portfolio value
-            max_hedge_value = portfolio_value * 0.5
-            max_shares = int(max_hedge_value / voo_price)
-            
-            if shares_to_trade > max_shares:
-                shares_to_trade = max_shares
-                print(f"DEBUG: Limited hedge to ${max_hedge_value:.2f} (max shares: {max_shares})")
-            
-            print(f"DEBUG: Final shares_to_trade: {shares_to_trade}, action: {hedge_action}")
-            
-            if shares_to_trade > 0:
-                if hedge_action == 'short':
-                    # POSITIVE BETA: Short VOO to reduce market exposure
-                    print(f"DEBUG: Executing SHORT hedge for positive beta")
-                    success, message = port.execute_hedge_trade('VOO', voo_price, shares_to_trade, currtime, 'short')
-                    if success:
-                        hedge_trade = f"Hedged positive beta: {message} (beta was {current_beta:.3f})"
-                        print(f"DEBUG: {hedge_trade}")
-                        return [hedge_trade]
+                want_long = min(max_sh, int((pv * (-beta)) / voo_price))
+
+            if want_short > 0:
+                # Positive-beta regime: no hedge long; short VOO only
+                hl = port.hedge_long_positions.get('VOO', 0)
+                if hl > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, hl, currtime, 'sell_hedge_long')
+                    out.append(f"Close hedge long before short hedge: {msg}" if ok else msg)
+                cur_short = port.short_positions.get('VOO', 0)
+                delta = want_short - cur_short
+                if delta > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, delta, currtime, 'short')
+                    if ok:
+                        out.append(f"+Short {delta} VOO: {msg} (β={beta:.3f})")
                     else:
-                        print(f"DEBUG: Short hedge failed: {message}")
-                        # Try partial hedge based on available margin
-                        available_margin = port.get_hedge_margin_balance()
-                        max_shares = int((available_margin * 2) / voo_price)  # 2x leverage with 50% margin
-                        if max_shares > 0:
-                            print(f"DEBUG: Trying partial short hedge with {max_shares} shares")
-                            success, message = port.execute_hedge_trade('VOO', voo_price, max_shares, currtime, 'short')
-                            if success:
-                                hedge_trade = f"Partial positive hedge: {message} (beta was {current_beta:.3f})"
-                                print(f"DEBUG: {hedge_trade}")
-                                return [hedge_trade]
-                
-                elif hedge_action == 'buy':
-                    # NEGATIVE BETA: Buy VOO on margin to increase market exposure
-                    print(f"DEBUG: Executing BUY hedge for negative beta")
-                    current_shorts = port.short_positions.get('VOO', 0)
-                    
-                    if current_shorts > 0:
-                        # First, buy back existing shorts
-                        shares_to_cover = min(shares_to_trade, current_shorts)
-                        print(f"DEBUG: Covering {shares_to_cover} existing VOO short shares first")
-                        success, message = port.execute_hedge_trade('VOO', voo_price, shares_to_cover, currtime, 'buy')
-                        if success:
-                            hedge_trade = f"Covered shorts for negative hedge: {message} (beta was {current_beta:.3f})"
-                            print(f"DEBUG: {hedge_trade}")
-                            
-                            # If we need more exposure beyond covering shorts
-                            remaining_shares = shares_to_trade - shares_to_cover
-                            if remaining_shares > 0:
-                                print(f"DEBUG: Need {remaining_shares} more shares - buying VOO on margin")
-                                success2, message2 = port.execute_hedge_trade('VOO', voo_price, remaining_shares, currtime, 'buy_margin')
-                                
-                                if success2:
-                                    hedge_trade += f" + Additional buy: {message2}"
-                                    print(f"DEBUG: Additional margin buy successful")
-                            
-                            return [hedge_trade]
+                        avail = port.get_hedge_margin_balance()
+                        max_add = int((avail * 2) / voo_price) if voo_price else 0
+                        if max_add > 0:
+                            ok2, msg2 = port.execute_hedge_trade('VOO', voo_price, min(delta, max_add), currtime, 'short')
+                            if ok2:
+                                out.append(f"+Short partial: {msg2} (β={beta:.3f})")
+                elif delta < 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, -delta, currtime, 'buy')
+                    if ok:
+                        out.append(f"Trim short {-delta} VOO: {msg} (β={beta:.3f})")
                     else:
-                        # No shorts to cover, buy directly on margin
-                        print(f"DEBUG: No existing shorts, buying {shares_to_trade} VOO shares on margin for negative hedge")
-                        success, message = port.execute_hedge_trade('VOO', voo_price, shares_to_trade, currtime, 'buy_margin')
-                        
-                        if success:
-                            hedge_trade = f"Hedged negative beta: {message} (beta was {current_beta:.3f})"
-                            print(f"DEBUG: {hedge_trade}")
-                            return [hedge_trade]
-                        else:
-                            print(f"DEBUG: Buy margin hedge failed: {message}")
-                            # Try partial hedge based on available margin
-                            available_margin = port.get_hedge_margin_balance()
-                            max_shares = int((available_margin * 2) / voo_price)  # 2x leverage
-                            if max_shares > 0:
-                                print(f"DEBUG: Trying partial margin buy hedge with {max_shares} shares")
-                                success, message = port.execute_hedge_trade('VOO', voo_price, max_shares, currtime, 'buy_margin')
-                                if success:
-                                    hedge_trade = f"Partial negative hedge on margin: {message} (beta was {current_beta:.3f})"
-                                    print(f"DEBUG: {hedge_trade}")
-                                    return [hedge_trade]
-                                else:
-                                    print(f"DEBUG: Partial margin buy failed: {message}")
-                            else:
-                                print(f"DEBUG: Insufficient margin for hedge. Available: ${available_margin:.2f}")
-            else:
-                print(f"DEBUG: No hedging needed - calculated shares_to_trade is 0")
-            
-            return []
-            
+                        out.append(f"Trim short failed: {msg}")
+
+            elif want_long > 0:
+                # Negative-beta regime: cover shorts first, then long VOO on margin
+                cs = port.short_positions.get('VOO', 0)
+                if cs > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, cs, currtime, 'buy')
+                    out.append(f"Buy back {cs} VOO (cover short): {msg}" if ok else f"Cover short failed: {msg}")
+                cur_hlong = port.hedge_long_positions.get('VOO', 0)
+                delta = want_long - cur_hlong
+                if delta > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, delta, currtime, 'buy_margin')
+                    if ok:
+                        out.append(f"+Long {delta} VOO on margin: {msg} (β={beta:.3f})")
+                    else:
+                        avail = port.get_hedge_margin_balance()
+                        max_add = int((avail * 2) / voo_price) if voo_price else 0
+                        if max_add > 0:
+                            ok2, msg2 = port.execute_hedge_trade(
+                                'VOO', voo_price, min(delta, max_add), currtime, 'buy_margin'
+                            )
+                            if ok2:
+                                out.append(f"+Long partial on margin: {msg2} (β={beta:.3f})")
+                elif delta < 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, -delta, currtime, 'sell_hedge_long')
+                    if ok:
+                        out.append(f"Trim hedge long {-delta} VOO: {msg} (β={beta:.3f})")
+                    else:
+                        out.append(f"Trim hedge long failed: {msg}")
+
+            # Target rounded to 0 shares but beta still meaningful — clear stale hedge from prior intervals
+            if beta > beta_th and want_short == 0:
+                hl = port.hedge_long_positions.get('VOO', 0)
+                if hl > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, hl, currtime, 'sell_hedge_long')
+                    if ok:
+                        out.append(f"Clear hedge long (target <1 sh): {msg}")
+                cs = port.short_positions.get('VOO', 0)
+                if cs > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, cs, currtime, 'buy')
+                    if ok:
+                        out.append(f"Clear short (target <1 sh): {msg}")
+            if beta < -beta_th and want_long == 0:
+                cs = port.short_positions.get('VOO', 0)
+                if cs > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, cs, currtime, 'buy')
+                    if ok:
+                        out.append(f"Clear short (target <1 sh, neg β): {msg}")
+                hl = port.hedge_long_positions.get('VOO', 0)
+                if hl > 0:
+                    ok, msg = port.execute_hedge_trade('VOO', voo_price, hl, currtime, 'sell_hedge_long')
+                    if ok:
+                        out.append(f"Clear hedge long (target <1 sh, neg β): {msg}")
+
+            return out
+
         except Exception as e:
-            print(f"ERROR: Error in beta hedging: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Beta hedging error: %s", e)
             return []
 
 def _serve_trading_ui_in_browser():
@@ -1384,7 +1305,7 @@ def validate_ticker(ticker):
                 'yfinance_info',
             )
 
-        for _ in range(4):
+        for _ in range(2):
             try:
                 hist = stock.history(period='3mo', auto_adjust=False)
                 if hist is not None and not hist.empty:
@@ -1395,7 +1316,7 @@ def validate_ticker(ticker):
                     )
             except Exception:
                 pass
-            time.sleep(random.uniform(0.2, 0.55))
+            time.sleep(0.08)
 
         return jsonify({'valid': False, 'ticker': sym, 'error': 'Ticker not found'})
     except Exception as e:
@@ -1458,10 +1379,8 @@ def start_simulation():
         
         # Extract trading rules
         trading_rules = {}
-        print(f"DEBUG: Raw trading rules data: {data.get('trading_rules', [])}")
         for rule_data in data.get('trading_rules', []):
             try:
-                print(f"DEBUG: Processing rule data: {rule_data}")
                 ticker = rule_data['ticker'].upper()
                 if ticker not in trading_rules:
                     trading_rules[ticker] = []
@@ -1472,31 +1391,19 @@ def start_simulation():
                     'shares': int(rule_data['shares']),
                     'one_time': rule_data.get('one_time', False)
                 })
-                print(f"DEBUG: Added rule for {ticker}: {trading_rules[ticker][-1]}")
             except Exception as e:
-                print(f"ERROR: Error processing trading rule: {e}")
-                print(f"Rule data: {rule_data}")
-                import traceback
-                traceback.print_exc()
+                logger.exception("Invalid trading rule payload: %s", e)
                 continue
         
-        print(f"DEBUG: Final trading rules: {trading_rules}")
-        
-        # Create and start simulation
-        print(f"DEBUG: About to create SimulationManager with trading_rules: {trading_rules}")
         beta_hedge_enabled = data.get('beta_hedge_enabled', False)
         simulation = SimulationManager(
             simulation_id, initial_cash, start_date, duration_days,
             trading_frequency, tickers, trading_rules, beta_hedge_enabled,
             duration_hours=duration_hours,
         )
-        
-        print(f"DEBUG: SimulationManager created successfully")
-        # Start simulation in background thread
         simulation.thread = threading.Thread(target=simulation.run_simulation)
         simulation.thread.daemon = True
         simulation.thread.start()
-        print(f"DEBUG: Simulation started in background thread")
         
         # Store simulation
         active_simulations[simulation_id] = simulation
@@ -1535,9 +1442,8 @@ def simulation_status(simulation_id):
     if simulation.is_complete:
         if hasattr(simulation, 'final_metrics'):
             response['final_metrics'] = simulation.final_metrics
-            print(f"DEBUG: Including final_metrics in response: {simulation.final_metrics}")
         else:
-            print(f"DEBUG: Simulation complete but no final_metrics found!")
+            logger.warning("Simulation %s complete without final_metrics; using fallback", simulation_id)
             # Create basic final_metrics as fallback
             response['final_metrics'] = {
                 'total_return_pct': 0.0,

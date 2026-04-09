@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Dancing_Script, Newsreader } from "next/font/google";
+import { Dancing_Script, DM_Sans } from "next/font/google";
 import { SyntaxTypingAnimation } from "./components/ui/syntax-typing-animation";
 import { mainDemoSyntaxSegments } from "./main-demo-segments";
 import { ThemeToggle } from "./components/theme-toggle";
@@ -24,9 +24,10 @@ function flaskBackendBaseUrl(): string {
     return process.env.NEXT_PUBLIC_FLASK_BACKEND_URL?.trim() || "";
 }
 
-const wallStreetTagline = Newsreader({
+/** DM Sans — landing UI (tagline, CTA, rail); pairs cleanly with the script wordmark. */
+const landingSans = DM_Sans({
     subsets: ["latin"],
-    weight: ["600", "700", "800"],
+    weight: ["300", "400", "500"],
 });
 
 const tradeSphereScript = Dancing_Script({
@@ -34,9 +35,8 @@ const tradeSphereScript = Dancing_Script({
     weight: ["600", "700"],
 });
 
-/** Logo palette: forest → emerald → lime (same in light & dark). */
-const tradeSphereBrandWordmark =
-    "bg-[linear-gradient(105deg,#1B4F32,#2ECC71,#ADFF2F,#D4EF22,#2ECC71,#1B4F32)] bg-clip-text text-transparent drop-shadow-[0_0_28px_rgba(46,204,113,0.45)]";
+/** Hero “TradeSphere” over the background video. */
+const tradeSphereHeroTitle = "text-white";
 
 const MainPage = () => {
     const { theme } = useTradeSphereTheme();
@@ -89,7 +89,9 @@ const MainPage = () => {
 
     return (
         <div
-            className={`min-h-screen font-sans transition-colors duration-300 ${shellBg}`}
+            className={`min-h-screen transition-colors duration-300 ${shellBg} ${
+                showTradingPlatform ? "font-sans" : landingSans.className
+            }`}
         >
             <ThemeToggle className="fixed right-5 top-5 z-50" />
 
@@ -105,7 +107,10 @@ const MainPage = () => {
                             preload="auto"
                             aria-hidden
                         >
-                            <source src="/animate-2.mp4" type="video/mp4" />
+                            <source
+                                src="/media/landing-background-loop.mp4"
+                                type="video/mp4"
+                            />
                         </video>
                         <div
                             className={`absolute inset-0 ${
@@ -123,19 +128,14 @@ const MainPage = () => {
                     >
                         <div className="mb-8 w-full text-center">
                             <h1
-                                className={`mb-3 text-6xl leading-none sm:mb-4 sm:text-7xl md:mb-5 md:text-7xl lg:text-8xl ${tradeSphereScript.className} ${tradeSphereBrandWordmark}`}
+                                className={`mb-6 text-6xl leading-none sm:mb-8 sm:text-7xl md:mb-10 md:text-7xl lg:text-8xl ${tradeSphereScript.className} ${tradeSphereHeroTitle}`}
                             >
                                 TradeSphere
                             </h1>
-                            <p
-                                className={`${wallStreetTagline.className} tradesphere-brand-shimmer mb-6 text-xl font-semibold italic leading-snug tracking-[0.06em] sm:text-2xl`}
-                            >
-                                Become your own Hedge Fund
-                            </p>
                             <button
                                 type="button"
                                 onClick={handleLaunchPlatform}
-                                className={`${wallStreetTagline.className} execute-trades-btn rounded-full border-2 border-transparent px-10 py-3.5 text-lg font-semibold italic tracking-[0.06em] transition-all duration-200 ${
+                                className={`execute-trades-btn rounded-full border-2 border-transparent px-10 py-3.5 text-lg font-light tracking-[0.06em] transition-all duration-200 ${
                                     theme === "dark"
                                         ? "text-white shadow-lg shadow-emerald-900/40 hover:shadow-xl hover:shadow-emerald-500/25"
                                         : "text-emerald-950 shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:shadow-lime-400/25"
@@ -172,16 +172,22 @@ const MainPage = () => {
                         <div className="mx-auto w-full max-w-3xl px-2">
                             <div className="flex items-center gap-4 sm:gap-6">
                                 <div
-                                    className="h-px min-w-[2rem] flex-1 bg-gradient-to-r from-transparent via-emerald-400/50 to-lime-300/35"
+                                    className={`h-px min-w-[2rem] flex-1 ${
+                                        theme === "dark"
+                                            ? "bg-gradient-to-r from-transparent via-emerald-400/50 to-lime-300/35"
+                                            : "bg-gradient-to-r from-transparent via-white/65 to-transparent"
+                                    }`}
                                     aria-hidden
                                 />
-                                <p
-                                    className={`${wallStreetTagline.className} shrink-0 text-center text-xl font-semibold italic leading-snug tracking-[0.06em] text-white sm:text-2xl md:text-3xl`}
-                                >
-                                    Trading Made Simple
+                                <p className="tradesphere-brand-shimmer shrink-0 text-center text-xl font-light leading-snug tracking-[-0.01em] sm:text-2xl md:text-3xl">
+                                    Become your own Hedge Fund
                                 </p>
                                 <div
-                                    className="h-px min-w-[2rem] flex-1 bg-gradient-to-l from-transparent via-emerald-400/50 to-lime-300/35"
+                                    className={`h-px min-w-[2rem] flex-1 ${
+                                        theme === "dark"
+                                            ? "bg-gradient-to-l from-transparent via-emerald-400/50 to-lime-300/35"
+                                            : "bg-gradient-to-l from-transparent via-white/65 to-transparent"
+                                    }`}
                                     aria-hidden
                                 />
                             </div>
@@ -223,7 +229,11 @@ const MainPage = () => {
                                 <span>Back to main page</span>
                             </button>
                             <h2
-                                className={`text-2xl sm:text-3xl ${tradeSphereScript.className} ${tradeSphereBrandWordmark}`}
+                                className={`text-2xl sm:text-3xl ${tradeSphereScript.className} ${
+                                    theme === "dark"
+                                        ? "text-zinc-100"
+                                        : "text-slate-900"
+                                }`}
                             >
                                 TradeSphere
                             </h2>
