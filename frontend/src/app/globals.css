@@ -136,10 +136,12 @@
 @keyframes shimmer-glow {
   0%,
   100% {
-    filter: brightness(1) saturate(1);
+    filter: brightness(1) saturate(1) drop-shadow(0 0 10px rgba(150, 235, 191, 0.45))
+      drop-shadow(0 0 26px rgba(150, 235, 191, 0.28));
   }
   50% {
-    filter: brightness(1.22) saturate(1.18);
+    filter: brightness(1.22) saturate(1.18) drop-shadow(0 0 16px rgba(150, 235, 191, 0.7))
+      drop-shadow(0 0 36px rgba(150, 235, 191, 0.4));
   }
 }
 
@@ -161,7 +163,7 @@
   }
 }
 
-/* TradeSphere brand: forest → emerald → lime (logo), same in light/dark */
+/* TradeSphere brand palette — multi-stop mint so `flame` (background-position) reads as motion */
 .tradesphere-brand-shimmer,
 .shimmer-text,
 .shimmer-text-light {
@@ -169,15 +171,14 @@
   -webkit-text-fill-color: transparent;
   background-image: linear-gradient(
     90deg,
-    #1b4f32,
-    #2ecc71,
-    #adff2f,
-    #d4ef22,
-    #2ecc71,
-    #1b4f32,
-    #adff2f,
-    #d4ef22,
-    #1b4f32
+    #6ed4a1,
+    #96ebbf,
+    #c8f7de,
+    #96ebbf,
+    #7fdca7,
+    #baf5d6,
+    #96ebbf,
+    #6ed4a1
   );
   background-size: 520% 100%;
   background-clip: text;
@@ -191,7 +192,7 @@
     shimmer-glow 2.2s ease-in-out infinite;
 }
 
-/* Landing tagline — same gradient, slightly slower pulse */
+/* Landing tagline — slower sweep + stronger glow pulse */
 .tradesphere-brand-shimmer {
   animation:
     flame 4.8s linear infinite,
@@ -231,24 +232,16 @@ html:not(.dark) .ts-syntax-typing .text-sky-400 {
   overflow: hidden;
 }
 
-.dark .execute-trades-btn:hover {
+/* Single hover treatment shared across themes: dark text on the mint pill so
+   it stays readable, glow uses the brand mint. */
+.execute-trades-btn:hover {
   transform: translateY(-2px);
-  color: #fff !important;
+  color: #0a3d24 !important;
   box-shadow:
-    0 0 20px rgba(46, 204, 113, 0.45),
-    0 0 42px rgba(173, 255, 47, 0.28),
-    0 0 60px rgba(27, 79, 50, 0.35);
-  background: linear-gradient(135deg, #1b4f32 0%, #2ecc71 45%, #adff2f 100%);
-}
-
-html:not(.dark) .execute-trades-btn:hover {
-  transform: translateY(-2px);
-  color: #000 !important;
-  box-shadow:
-    0 0 22px rgba(46, 204, 113, 0.4),
-    0 0 42px rgba(173, 255, 47, 0.25),
-    0 0 58px rgba(27, 79, 50, 0.2);
-  background: linear-gradient(135deg, #1b4f32 0%, #2ecc71 45%, #adff2f 100%);
+    0 0 22px rgba(150, 235, 191, 0.6),
+    0 0 42px rgba(150, 235, 191, 0.4),
+    0 0 60px rgba(150, 235, 191, 0.45);
+  background: #96ebbf;
 }
 
 .execute-trades-btn::before {
@@ -260,8 +253,42 @@ html:not(.dark) .execute-trades-btn:hover {
   height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
   transition: left 0.5s ease;
+  z-index: 0;
 }
 
 .execute-trades-btn:hover::before {
   left: 100%;
 }
+
+/* Theme toggle — small twinkling stars inside the moon SVG */
+@keyframes ts-toggle-star-twinkle {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.ts-toggle-star {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: ts-toggle-star-twinkle 2.4s ease-in-out infinite;
+}
+
+.ts-toggle-star--delay-1 {
+  animation-delay: 0.6s;
+}
+
+.ts-toggle-star--delay-2 {
+  animation-delay: 1.2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-toggle-star {
+    animation: none;
+  }
+}
+

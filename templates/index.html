@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Trading App</title>
+    <title>Trading Dashboard</title>
     <script>
     (function () {
         try {
@@ -12,6 +12,14 @@
             var t = (u === 'light' || u === 'dark') ? u : ((s === 'light' || s === 'dark') ? s : '{{ theme }}');
             document.documentElement.setAttribute('data-theme', t);
         } catch (e) {}
+        // Tell the parent shell that the iframe is now on the dashboard so the
+        // Next.js top nav can highlight Dashboard (in case the user got here
+        // via an in-iframe link such as the studio's back arrow).
+        try {
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({ type: 'tradesphere-view', view: 'dashboard' }, '*');
+            }
+        } catch (e) { /* ignore */ }
     })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,82 +30,65 @@
     <link href="{{ url_for('static', filename='css/style.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/tradesphere-theme.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
 </head>
-<body>
+<body id="top">
     <div class="container-fluid">
         <div class="row">
             <!-- Sidebar -->
             <div class="col-md-4 sidebar">
                 <div class="card">
                     <div class="card-header ts-brand-header">
-                        <h3 class="ts-brand-title"><i class="fas fa-chart-line"></i> Stock Trading App</h3>
+                        <h3 class="ts-brand-title">Portfolio Configuration</h3>
                     </div>
                     <div class="card-body">
                         <form id="simulationForm">
                             <!-- Initial Cash -->
                             <div class="mb-3">
-                                <label for="initialCash" class="form-label">Initial Cash ($)</label>
-                                <input type="number" class="form-control" id="initialCash" value="110000" min="1000" step="1000">
+                                <label for="initialCash" class="form-label">Initial Cash Deposit</label>
+                                <div class="input-group initial-cash-group">
+                                    <span class="input-group-text initial-cash-prefix">$</span>
+                                    <input type="text" inputmode="numeric" class="form-control" id="initialCash" value="110,000" autocomplete="off" data-min="1000">
+                                </div>
                             </div>
 
-                            <!-- Date Range Info -->
+                            <!-- Trading Frequency: segmented buttons (longest → shortest).
+                                 The hidden #tradingFrequency input mirrors the active button so
+                                 existing JS (`document.getElementById('tradingFrequency').value`)
+                                 keeps working without changes. -->
                             <div class="mb-3">
-                                <label class="form-label">Date Range</label>
-                                <div class="alert alert-info py-2">
+                                <label class="form-label d-block">Time Interval</label>
+                                <div class="trading-frequency-buttons" role="group" aria-label="Trading time interval">
+                                    <button type="button" class="ts-interval-btn" data-value="1m" onclick="selectTradingFrequency(this)" aria-pressed="false">1m</button>
+                                    <button type="button" class="ts-interval-btn" data-value="5m"    onclick="selectTradingFrequency(this)" aria-pressed="false">5m</button>
+                                    <button type="button" class="ts-interval-btn" data-value="15m"   onclick="selectTradingFrequency(this)" aria-pressed="false">15m</button>
+                                    <button type="button" class="ts-interval-btn" data-value="60m"   onclick="selectTradingFrequency(this)" aria-pressed="false">60m</button>
+                                    <button type="button" class="ts-interval-btn active" data-value="daily" onclick="selectTradingFrequency(this)" aria-pressed="true">Daily</button>
+                                </div>
+                                <input type="hidden" id="tradingFrequency" value="daily">
+                                <small class="text-dark ms-2 mt-1 d-block" id="frequencyHelp"></small>
+                            </div>
+
+                            <!-- Date Range: label → info box → slider with tight min/max captions -->
+                            <div class="mb-3">
+                                <label for="durationDays" class="form-label">Date Range</label>
+                                <div class="alert alert-info py-2 mb-2">
                                     <small>
                                         <i class="fas fa-info-circle"></i>
-                                        <strong>Range:</strong> From now, based on interval &amp; duration
-                                        <br>
-                                        <span id="dateRangeInfo">Select an interval to see date range</span>
+                                        <strong>Range:</strong> <span id="dateRangeSummary">Last 100 days of trading</span>
                                     </small>
+                                    <div id="dateRangeInfo" class="small mt-1" hidden></div>
+                                </div>
+                                <input type="range" class="form-range duration-slider" id="durationDays" min="1" max="365" value="100">
+                                <div class="d-flex justify-content-between duration-slider-captions">
+                                    <small id="minDuration">1 day</small>
+                                    <small id="maxDuration">365 days</small>
                                 </div>
                             </div>
 
-                            <!-- Trading Frequency -->
+                            <!-- Stock Positions: opening holdings (shares already owned).
+                                 They do not reduce Initial Cash; the sim establishes them
+                                 at market without debiting cash. Buys during the run use cash. -->
                             <div class="mb-3">
-                                <label class="form-label">Trading Frequency</label>
-                                <select class="form-select trading-frequency-select" id="tradingFrequency" onchange="updateDurationLimits()">
-                                    <option value="1m" selected>1 minute</option>
-                                    <option value="daily">Daily</option>
-                                    <option value="5m">5 minute</option>
-                                    <option value="15m">15 minute</option>
-                                    <option value="60m">60 minute (hourly)</option>
-                                </select>
-                                <small class="text-dark" id="frequencyHelp"></small>
-                                <small class="text-muted d-block mt-1">Trading rules run every step.</small>
-                            </div>
-                            
-                            <!-- Beta Hedge -->
-                            <div class="mb-3">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="betaHedgeEnabled" checked>
-                                    <label class="form-check-label" for="betaHedgeEnabled">
-                                        <strong>Beta Hedge</strong>
-                                        <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-placement="top" 
-                                           title="Hedge with VOO: short when beta &gt; 0, buy on margin when beta &lt; 0"></i>
-                                    </label>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <small class="text-dark">Shorts/buys VOO to hedge beta exposure</small>
-                                    <small class="text-info" id="hedgeMarginBalance">
-                                        <span class="me-2">Hedge Margin:</span>
-                                        <span>$0.00</span>
-                                    </small>
-                                </div>
-                            </div>
-
-                            <!-- Duration -->
-                            <div class="mb-3">
-                                <label for="durationDays" class="form-label"><span id="durationLabelTitle">Hours of the trading day to include</span>: <span id="durationValue">3</span> <span id="durationUnit">hours</span></label>
-                                <input type="range" class="form-range" id="durationDays" min="1" max="6" value="3">
-                                <div class="d-flex justify-content-between">
-                                    <small id="minDuration">1 hour</small>
-                                    <small id="maxDuration">6 hours</small>
-                                </div>
-                            </div>
-
-                            <!-- Tickers -->
-                            <div class="mb-3">
-                                <label class="form-label">Stocks to Trade</label>
+                                <label class="form-label">Stock Positions</label>
                                 <div id="tickersContainer">
                                     <div class="ticker-input mb-2">
                                         <div class="input-group">
@@ -127,17 +118,195 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addTicker()">
-                                    <i class="fas fa-plus"></i> Add Stock
+                                <div class="ts-portfolio-validation-row" id="addPositionRow">
+                                    <button type="button" id="addPositionBtn" class="btn btn-sm btn-outline-primary flex-shrink-0" onclick="addTicker()">
+                                        <i class="fas fa-plus"></i> Add Position
+                                    </button>
+                                    <div id="portfolioValidationStatus" class="ts-portfolio-validation-status" role="status" aria-live="polite" hidden></div>
+                                </div>
+                            </div>
+
+                            <!-- (Strategy Controls — Beta Hedge + Trading Rules —
+                                 moved out of the sidebar into the unified
+                                 #strategyCard on the right column, where an
+                                 elegant segmented switch lets the user choose
+                                 between Manual rules and an Imported script.) -->
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Performance Charts — own card in the sidebar, below the form -->
+                <div class="card mt-2 sidebar-plots-card" id="plotsCard" style="display: none;">
+                    <div class="card-header py-3">
+                        <h5 class="mb-0">Performance Charts</h5>
+                    </div>
+                    <div class="card-body p-2">
+                        <!-- Plot Controls -->
+                        <div class="mb-2">
+                            <div class="btn-group btn-group-sm w-100" role="group" aria-label="Plot types">
+                                <button type="button" class="btn btn-outline-primary active" id="valuePlotBtn" data-plot-type="value">
+                                    <i class="fas fa-chart-line"></i>
                                 </button>
+                                <button type="button" class="btn btn-outline-primary" id="percentagePlotBtn" data-plot-type="percentage">
+                                    <i class="fas fa-percentage"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" id="pnlPlotBtn" data-plot-type="pnl">
+                                    <i class="fas fa-chart-bar"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Benchmark overlay chips (only visible on the percentage view) -->
+                        <div id="benchmarkOverlays" class="benchmark-overlays" style="display: none;">
+                            <span class="benchmark-overlays-label">Compare:</span>
+                            <button type="button" class="benchmark-chip is-sp500" data-benchmark="SPY">
+                                <span class="benchmark-chip-dot"></span>S&amp;P 500
+                            </button>
+                            <button type="button" class="benchmark-chip is-nasdaq" data-benchmark="QQQ">
+                                <span class="benchmark-chip-dot"></span>NASDAQ
+                            </button>
+                        </div>
+
+                        <!-- Plot Loading Indicator -->
+                        <div id="plotLoading" class="text-center" style="display: none;">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                <span class="visually-hidden">Loading plot...</span>
+                            </div>
+                            <small class="text-dark">Loading...</small>
+                        </div>
+
+                        <!-- Plot Container -->
+                        <div id="plotContainer" class="chart-host">
+                            <div id="plotPlaceholder" class="text-center text-dark py-3">
+                                <i class="fas fa-chart-area fa-2x mb-2"></i>
+                                <p class="small mb-0">Run simulation to see charts</p>
+                            </div>
+                            <div id="plotCanvasWrap" style="display: none; position: relative; height: 420px;">
+                                <canvas id="plotCanvas"></canvas>
+                            </div>
+                            <div id="plotError" class="text-center text-danger py-3" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-8">
+                <!-- Progress Bar -->
+                <div class="card mb-3" id="progressCard" style="display: none;">
+                    <div class="card-header py-2">
+                        <h5 class="mb-0">Simulation Progress</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="progress mb-2">
+                            <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <small id="progressText">Starting simulation...</small>
+                    </div>
+                </div>
+
+                <!-- Results Display -->
+                <div class="card" id="simulationResultsCard">
+                    <div class="card-header simulation-results-header d-flex align-items-center justify-content-between flex-wrap gap-2 py-3">
+                        <h4 class="mb-0">Simulation Results</h4>
+                        <button type="button"
+                                class="btn btn-sim-start"
+                                id="startBtn"
+                                onclick="startSimulation(event)">
+                            <i class="fas fa-play" aria-hidden="true"></i> Start
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="resultsContainer">
+                            <div class="text-center text-dark">
+                                <p class="mb-0">Configure your portfolio, then press the <strong>Start</strong> button above to run tests</p>
+                            </div>
+                        </div>
+                        <!-- Stop only: Start lives in the mint card-header. -->
+                        <div class="mt-3" id="runControls">
+                            <button type="button" class="btn btn-danger" id="stopBtn" style="display: none;">
+                                <i class="fas fa-stop"></i> Stop Simulation
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Final Metrics -->
+                <div class="card mt-3" id="finalMetricsCard" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-trophy"></i> Final Performance Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row row-cols-2 row-cols-md-5 g-2 final-metrics-grid" id="finalMetrics">
+                            <!-- Metrics will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Strategy: unified card that lets the user pick between
+                     manually-configured rules and an imported saved-strategy
+                     script via an elegant segmented switch. The active mode's
+                     pane is the only one visible at a time. Default = manual. -->
+                <div class="card mt-3" id="strategyCard" data-mode="manual">
+                    <div class="card-header strategy-card-header">
+                        <h5 class="mb-0 strategy-card-title">Trading Strategy</h5>
+                        <div class="strategy-mode-switch" role="tablist" aria-label="Strategy mode">
+                            <button type="button"
+                                    class="strategy-mode-option active"
+                                    data-mode="manual"
+                                    role="tab"
+                                    aria-selected="true"
+                                    aria-controls="strategyManualPane">
+                                <i class="fas fa-sliders-h"></i>
+                                <span>Manual</span>
+                            </button>
+                            <button type="button"
+                                    class="strategy-mode-option"
+                                    data-mode="imported"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="strategyImportedPane">
+                                <i class="fas fa-file-import"></i>
+                                <span>Imported</span>
+                            </button>
+                            <span class="strategy-mode-thumb" aria-hidden="true"></span>
+                        </div>
+                        <a href="/strategy_studio?embed=1&theme={{ theme }}" class="btn btn-sm btn-open-studio strategy-open-studio" id="openStudioLink">
+                            <i class="fas fa-external-link-alt"></i> Open Studio
+                        </a>
+                    </div>
+                    <div class="card-body strategy-card-body">
+
+                        <!-- Manual pane: Beta Hedge + Trading Rules -->
+                        <div class="strategy-pane" id="strategyManualPane" role="tabpanel" aria-labelledby="strategyMode-manual">
+                            <p class="text-dark small mb-3 strategy-pane-intro">
+                                Add simple trading rules executed at each step
+                            </p>
+
+                            <!-- Beta Hedge -->
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="betaHedgeEnabled" checked>
+                                    <label class="form-check-label" for="betaHedgeEnabled">
+                                        <strong>Beta Hedge</strong>
+                                        <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-placement="top"
+                                           title="Buy/Sell the index (VOO) to automatically hedge portfolio beta exposure"></i>
+                                    </label>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-info" id="hedgeMarginBalance">
+                                        <span class="me-2">Margin Balance Available:</span>
+                                        <span>$0.00</span>
+                                    </small>
+                                </div>
                             </div>
 
                             <!-- Trading Rules -->
-                            <div class="mb-3">
+                            <div class="mb-0">
                                 <label class="form-label">
                                     Trading Rules
-                                    <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-placement="top" 
-                                       title="Auto buy/sell on price. Buys need cash; sells need shares. Evaluated each step (same cadence as Trading Frequency)."></i>
+                                    <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="Automated conditional buy/sell on price. Executed at each interval step."></i>
                                 </label>
                                 <div id="tradingRulesContainer">
                                     <div class="trading-rule mb-2" onclick="toggleOneTimeMode(this)" title="Click to toggle one-time execution mode">
@@ -168,197 +337,169 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addTradingRule()">
+                                <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="addTradingRule()">
                                     <i class="fas fa-plus"></i> Add Rule
                                 </button>
                             </div>
+                        </div>
 
-                            <!-- Portfolio Plots -->
-                            <div class="card mt-3" id="plotsCard" style="display: none;">
-                                <div class="card-header">
-                                    <h6><i class="fas fa-chart-line"></i> Portfolio Charts</h6>
-                                </div>
-                                <div class="card-body">
-                                    <!-- Plot Controls -->
-                                    <div class="mb-2">
-                                        <div class="btn-group btn-group-sm w-100" role="group" aria-label="Plot types">
-                                            <button type="button" class="btn btn-outline-primary active" id="valuePlotBtn" data-plot-type="value">
-                                                <i class="fas fa-chart-line"></i>
-                                            </button>
-                                            <button type="button" class="btn btn-outline-primary" id="percentagePlotBtn" data-plot-type="percentage">
-                                                <i class="fas fa-percentage"></i>
-                                            </button>
-                                            <button type="button" class="btn btn-outline-primary" id="pnlPlotBtn" data-plot-type="pnl">
-                                                <i class="fas fa-chart-bar"></i>
-                                            </button>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Plot Loading Indicator -->
-                                    <div id="plotLoading" class="text-center" style="display: none;">
-                                        <div class="spinner-border spinner-border-sm text-primary" role="status">
-                                            <span class="visually-hidden">Loading plot...</span>
-                                        </div>
-                                        <small class="text-dark">Loading...</small>
-                                    </div>
-                                    
-                                    <!-- Plot Container -->
-                                    <div id="plotContainer">
-                                        <div class="text-center text-dark">
-                                            <i class="fas fa-chart-area fa-2x mb-2"></i>
-                                            <p class="small">Run simulation to see charts</p>
-                                        </div>
-                                    </div>
-                                </div>
+                        <!-- Imported pane: pick a saved strategy from the Studio.
+                             When the user presses Start Simulation the engine
+                             runs against this dashboard's setup (intervals,
+                             dates, positions, initial cash, hedge) but uses
+                             the imported script as the per-tick trading logic
+                             in place of manual rules. -->
+                        <div class="strategy-pane" id="strategyImportedPane" role="tabpanel" aria-labelledby="strategyMode-imported" hidden>
+                            <p class="text-dark small mb-2 strategy-pane-intro">
+                                Picks the script that runs in place of manual rules when you press
+                                <strong>Start Simulation</strong>. For per-second execution against
+                                live quotes, use
+                                <a href="/live_trading?embed=1&theme={{ theme }}" id="importStrategyLiveLink">Live Trading</a>.
+                            </p>
+                            <select id="importStrategySelect" class="form-select form-select-sm mb-2" style="max-width: 320px;">
+                                <option value="">— No saved strategies —</option>
+                            </select>
+                            <div id="importStrategyPreview" class="import-strategy-preview" hidden>
+                                <small class="text-dark fw-semibold">Strategy preview (read-only)</small>
+                                <pre><code id="importStrategyPreviewCode"></code></pre>
                             </div>
-
-                            <!-- Control Buttons -->
-                            <div class="d-grid gap-2">
-                                <button type="submit" class="btn btn-primary" id="startBtn">
-                                    <i class="fas fa-play"></i> Start Simulation
-                                </button>
-                                <button type="button" class="btn btn-danger" id="stopBtn" style="display: none;">
-                                    <i class="fas fa-stop"></i> Stop Simulation
-                                </button>
-                            </div>
-                        </form>
+                        </div>
                     </div>
                 </div>
+
+                <!-- (Teeby live-chat widget moved out of the column flow — it now
+                     renders below as a fixed-position floating widget, anchored
+                     to the bottom-right of the viewport like a live chat
+                     support panel.) -->
             </div>
+        </div>
+    </div>
 
-            <!-- Main Content -->
-            <div class="col-md-8">
-                <!-- Progress Bar -->
-                <div class="card mb-3" id="progressCard" style="display: none;">
-                    <div class="card-body">
-                        <h5>Simulation Progress</h5>
-                        <div class="progress mb-2">
-                            <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%"></div>
-                        </div>
-                        <small id="progressText">Starting simulation...</small>
+    <!-- Teeby live-chat widget: floating launcher + slide-in panel.
+         Pinned bottom-right of the viewport so it's always reachable, like
+         Intercom/Drift. The launcher is a circular Teeby avatar; clicking
+         it opens the chat panel above it. Existing chat IDs are preserved
+         inside the panel so app.js's chat logic keeps working untouched. -->
+    <div id="teebyWidget" class="teeby-widget" data-state="closed">
+        <!-- Slide-in chat panel (kept under #aiAdvisorCard so all existing
+             theme/layout overrides for #aiAdvisorCard still apply). -->
+        <div class="teeby-chat-panel" id="teebyChatPanel" role="dialog" aria-modal="false" aria-labelledby="teebyChatTitle" aria-hidden="true" style="opacity:0;visibility:hidden;pointer-events:none;">
+            <div class="teeby-chat-panel-inner" id="aiAdvisorCard">
+                <!-- Solid mint header — same #96ebbf swatch used by every
+                     other card header on the dashboard so the panel feels
+                     native. Title on the left, Clear + Close icon buttons
+                     on the right. -->
+                <div class="teeby-chat-header" id="teebyChatHeader">
+                    <h6 class="teeby-chat-title" id="teebyChatTitle">
+                        Meet Teeby — your personal AI Portfolio Advisor
+                    </h6>
+                    <div class="teeby-chat-actions" role="group" aria-label="Chat actions">
+                        <button class="btn btn-sm teeby-action-btn" type="button" id="clearChatBtn" title="Clear chat history" aria-label="Clear chat history">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                        <button class="btn btn-sm teeby-action-btn teeby-close-btn" type="button" id="teebyCloseBtn" title="Close chat" aria-label="Close chat">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
                 </div>
-
-                <!-- Results Display -->
-                <div class="card">
-                    <div class="card-header">
-                        <h4><i class="fas fa-chart-bar"></i> Simulation Results</h4>
-                    </div>
-                    <div class="card-body">
-                        <div id="resultsContainer">
-                            <div class="text-center text-dark">
-                                <i class="fas fa-chart-line fa-3x mb-3"></i>
-                                <p>Configure your portfolio and start a simulation to see results here.</p>
+                <div class="teeby-chat-body">
+                    <div id="aiChatMessages" class="chat-messages">
+                        <div class="message ai-message">
+                            <div class="message-content">
+                                <span class="teeby-chat-avatar-wrap" aria-hidden="true">
+                                    <img class="teeby-chat-img" src="{{ url_for('static', filename='media/teeby-avatar.png') }}" alt="Teeby" width="84" height="84" loading="lazy" decoding="async">
+                                </span>
+                                <div class="message-text">
+                                    Hi! I'm <strong>Teeby</strong>, your AI portfolio assistant. I can analyze your portfolio performance, share insights on your trading strategy, and suggest improvements.
+                                    <br><br>
+                                    Try asking me questions like:
+                                    <ul>
+                                        <li>"How is my portfolio performing?"</li>
+                                        <li>"What are the risks in my current strategy?"</li>
+                                        <li>"How can I improve my diversification?"</li>
+                                        <li>"Should I adjust my trading rules?"</li>
+                                    </ul>
+                                </div>
                             </div>
+                            <div class="message-time" id="aiWelcomeTime"></div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Final Metrics -->
-                <div class="card mt-3" id="finalMetricsCard" style="display: none;">
-                    <div class="card-header">
-                        <h5><i class="fas fa-trophy"></i> Final Performance Metrics</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row" id="finalMetrics">
-                            <!-- Metrics will be populated here -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- AI Advisor Chat -->
-                <div class="card mt-3" id="aiAdvisorCard" style="display: none;">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0 text-white d-flex align-items-center">
-                            <span class="teeby-header-avatar-wrap" aria-hidden="true">
-                                <img class="teeby-header-img" src="{{ url_for('static', filename='media/teeby-avatar.png') }}" alt="Teeby" width="84" height="84" loading="lazy" decoding="async">
-                            </span>
-                            <span>Meet Teeby — your AI Portfolio Assistant</span>
-                        </h5>
-                        <div class="btn-group" role="group">
-                            <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="collapse" data-bs-target="#aiChatCollapse">
-                                <i class="fas fa-comments"></i> Chat
+                    <div class="chat-input-container">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="aiChatInput" placeholder="Ask me about your portfolio..." maxlength="500">
+                            <button class="btn btn-primary" type="button" id="aiSendBtn">
+                                <i class="fas fa-paper-plane"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-light" type="button" id="clearChatBtn" title="Clear chat history">
-                                <i class="fas fa-trash"></i> Clear
+                        </div>
+                    </div>
+
+                    <div class="quick-questions mt-2">
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="How is my portfolio performing?">
+                                Performance Analysis
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="What are the risks in my strategy?">
+                                Risk Assessment
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="How can I improve diversification?">
+                                Diversification
+                            </button>
+                            <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="Should I adjust my trading rules?">
+                                Trading Rules
                             </button>
                         </div>
                     </div>
-                    <div class="collapse" id="aiChatCollapse">
-                        <div class="card-body">
-                            <!-- Chat Messages -->
-                            <div id="aiChatMessages" class="chat-messages">
-                                <div class="message ai-message">
-                                    <div class="message-content">
-                                        <span class="teeby-chat-avatar-wrap" aria-hidden="true">
-                                            <img class="teeby-chat-img" src="{{ url_for('static', filename='media/teeby-avatar.png') }}" alt="Teeby" width="84" height="84" loading="lazy" decoding="async">
-                                        </span>
-                                        <div class="message-text">
-                                            Hi! I'm <strong>Teeby</strong>, your AI portfolio assistant. I can analyze your portfolio performance, share insights on your trading strategy, and suggest improvements. 
-                                            <br><br>
-                                            Try asking me questions like:
-                                            <ul>
-                                                <li>"How is my portfolio performing?"</li>
-                                                <li>"What are the risks in my current strategy?"</li>
-                                                <li>"How can I improve my diversification?"</li>
-                                                <li>"Should I adjust my trading rules?"</li>
-                                            </ul>
-                                        </div>
-                                    </div>
-                                    <div class="message-time" id="aiWelcomeTime"></div>
-                                </div>
-                            </div>
-                            
-                            <!-- Chat Input -->
-                            <div class="chat-input-container">
-                                <div class="input-group">
-                                    <input type="text" class="form-control" id="aiChatInput" placeholder="Ask me about your portfolio..." maxlength="500">
-                                    <button class="btn btn-primary" type="button" id="aiSendBtn">
-                                        <i class="fas fa-paper-plane"></i>
-                                    </button>
-                                </div>
-                                <small class="text-dark">Enter to send</small>
-                            </div>
-                            
-                            <!-- Quick Questions -->
-                            <div class="quick-questions mt-3">
-                                <small class="text-dark">Shortcuts</small>
-                                <div class="d-flex flex-wrap gap-2 mt-1">
-                                    <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="How is my portfolio performing?">
-                                        Performance Analysis
-                                    </button>
-                                    <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="What are the risks in my strategy?">
-                                        Risk Assessment
-                                    </button>
-                                    <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="How can I improve diversification?">
-                                        Diversification
-                                    </button>
-                                    <button class="btn btn-sm btn-outline-primary quick-question-btn" data-question="Should I adjust my trading rules?">
-                                        Trading Rules
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Cerebras Branding -->
-                            <div class="text-center mt-3 pt-3 border-top">
-                                <div class="d-flex flex-column align-items-center">
-                                    <a href="https://www.cerebras.ai" target="_blank" rel="noopener noreferrer" class="cerebras-logo-link">
-                                        <img src="{{ url_for('static', filename='media/cerebras-logo.png') }}" alt="Cerebras Logo" class="cerebras-logo mb-2" width="60" height="60">
-                                    </a>
-                                    <small class="text-dark">
-                                        Powered by 
-                                        <a href="https://www.cerebras.ai" target="_blank" rel="noopener noreferrer" class="cerebras-branding-link">
-                                            <strong class="cerebras-branding">Cerebras</strong>
-                                        </a>
-                                    </small>
-                                </div>
-                            </div>
+
+                    <!-- Cerebras Branding -->
+                    <div class="text-center mt-3 pt-3 border-top">
+                        <div class="d-flex flex-column align-items-center">
+                            <a href="https://www.cerebras.ai" target="_blank" rel="noopener noreferrer" class="cerebras-logo-link">
+                                <img src="{{ url_for('static', filename='media/cerebras-logo.png') }}" alt="Cerebras Logo" class="cerebras-logo mb-2" width="60" height="60">
+                            </a>
+                            <small class="text-dark">
+                                Powered by
+                                <a href="https://www.cerebras.ai" target="_blank" rel="noopener noreferrer" class="cerebras-branding-link">
+                                    <strong class="cerebras-branding">Cerebras</strong>
+                                </a>
+                            </small>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- Invite bubble: appears next to the launcher to draw the user
+             in, like a live-chat-rep greeting. Auto-hides when the panel
+             opens or when the user dismisses it via the × button.
+
+             The inline `style` keeps the bubble fully hidden from the
+             first paint until JS explicitly reveals it — without this,
+             a brief flash can happen between HTML rendering and the
+             external stylesheet's `opacity: 0` rule winning the cascade. -->
+        <div class="teeby-invite" id="teebyInvite" role="status" aria-live="polite" style="opacity:0;visibility:hidden;pointer-events:none;">
+            <span class="teeby-invite-text">
+                <strong>Hi, I'm Teeby!</strong>
+                Need a hand with your portfolio? Click here to chat with me.
+            </span>
+            <button type="button" class="teeby-invite-close" id="teebyInviteClose" aria-label="Dismiss chat invitation">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <!-- Launcher button: circular Teeby avatar pinned bottom-right.
+             Click to open the panel. The launcher fades out while the
+             chat is open (the in-panel × handles closing) and fades
+             back in when the panel closes. -->
+        <button type="button" class="teeby-launcher" id="teebyLauncher" aria-label="Open chat with Teeby" aria-controls="teebyChatPanel" aria-expanded="false">
+            <span class="teeby-launcher-ring" aria-hidden="true"></span>
+            <span class="teeby-launcher-avatar" aria-hidden="true">
+                <img class="teeby-launcher-img" src="{{ url_for('static', filename='media/teeby-avatar.png') }}" alt="" width="64" height="64" loading="lazy" decoding="async">
+            </span>
+        </button>
     </div>
+
+    {% include '_site_footer.html' %}
 
     {% if not embed %}
     <button type="button" class="ts-theme-toggle" id="tsThemeToggle" title="Toggle light / dark mode" aria-label="Toggle light or dark mode">

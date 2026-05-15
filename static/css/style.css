@@ -1,12 +1,28 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+html, body {
+    margin: 0;
+    padding: 0;
+}
+
 body {
-    background: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 100%);
+    /* Plain white page background — themed body rule may override; both should render uniform. */
+    background: #ffffff;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     font-weight: 400;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* Iframe top edge → no vertical offset to the first row. */
+body > .container-fluid {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+body > .container-fluid > .row {
+    margin-top: 0;
+    --bs-gutter-y: 0;
 }
 
 /* Typography improvements */
@@ -131,18 +147,57 @@ small {
 }
 
 .sidebar {
-    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    /* No own background — let the body's color flow under the whole page so the left and right
+       halves don't look like two different surfaces. */
+    background: transparent;
     min-height: 100vh;
-    box-shadow: 2px 0 10px rgba(0,0,0,0.08);
-    padding: 24px;
-    border-right: 1px solid #e2e8f0;
+    /* No top or left padding → Trading Dashboard hugs the page's top separator + viewport edge. */
+    padding: 0 24px 24px 0;
+}
+
+/* Trading Dashboard sits flush against the top separator and the viewport edge — square all corners.
+   Bootstrap rounds .card-header / .card-body independently, so we flatten them too. */
+.sidebar > .card,
+.sidebar > .card > .card-header,
+.sidebar > .card > .card-body,
+.sidebar > .card > .card-footer {
+    border-radius: 0 !important;
+}
+
+/* Right column: stretch Simulation Results / Progress / Final Metrics / AI Advisor
+   even closer to the right edge — only a narrow 12 px breathing strip — and keep them
+   flush against the top line of the page. The narrower right gutter widens the cards
+   by an equal amount, capturing more of the page. */
+.row > .col-md-8 {
+    padding: 0 12px 24px 0;
+}
+
+/* Belt-and-suspenders: kill any top margin on the first visible card so it touches the top line. */
+.row > .col-md-8 > .card:first-child,
+.row > .col-md-8 > .card:not([style*="display: none"]):first-of-type {
+    margin-top: 0 !important;
+}
+
+.row > .col-md-8 > .card,
+.row > .col-md-8 > .card > .card-header,
+.row > .col-md-8 > .card > .card-body,
+.row > .col-md-8 > .card > .card-footer {
+    border-radius: 0 !important;
+}
+
+/* Halve the visible gap (24 px → 12 px) to the dashboard by extending each right-column
+   card 12 px leftward — the right edge is unchanged, so the cards just get 12 px wider on
+   their left side. Dashboard column is not touched. */
+.row > .col-md-8 > .card {
+    margin-left: -12px;
+    width: calc(100% + 12px);
 }
 
 .card {
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    border: 1px solid #96ebbf;
+    box-shadow: 0 4px 12px rgba(150, 235, 191, 0.20);
     border-radius: 12px;
-    background: white;
+    /* Background is set by the theme stylesheet so every main container shares one surface. */
 }
 
 .card-body {
@@ -150,11 +205,24 @@ small {
 }
 
 .card-header {
-    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
-    color: white;
+    background: #96ebbf;
+    color: #0a3d24;
     border-radius: 12px 12px 0 0 !important;
     padding: 20px 24px;
-    border-bottom: 1px solid #3b82f6;
+    border-bottom: 1px solid rgba(10, 61, 36, 0.18);
+}
+
+/* Simulation Progress — slim mint header bar (compact, not full-height). */
+#progressCard > .card-header {
+    padding: 6px 16px;
+}
+
+#progressCard > .card-header h5 {
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    color: #0a3d24;
+    line-height: 1.2;
 }
 
 .card-header h3, .card-header h4, .card-header h5 {
@@ -279,6 +347,101 @@ small {
 .trading-frequency-select:focus {
     border-color: #667eea;
     box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+/* Duration slider — pull the "1 hour" / "365 days" edge captions right up to
+   the slider rail so they read as endpoints of the rail, not floating labels. */
+.duration-slider { margin-bottom: 0; padding-bottom: 0; }
+.duration-slider-captions { margin-top: -4px; line-height: 1; }
+.duration-slider-captions small { line-height: 1.1; }
+
+/* Initial Cash Deposit — text input with "$" prefix in an input-group.
+   Keep the prefix visually anchored to the field, matching the segmented
+   interval control's outer border treatment. */
+.initial-cash-group .initial-cash-prefix {
+    font-weight: 700;
+    color: #475569;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-right: 0;
+}
+
+html[data-theme="dark"] .initial-cash-group .initial-cash-prefix {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.initial-cash-group .form-control:focus {
+    border-color: #96ebbf;
+    box-shadow: 0 0 0 0.2rem rgba(150, 235, 191, 0.20);
+}
+
+/* Segmented control replacing the old <select> dropdown for the Trading Time
+   Interval. The .trading-frequency-buttons wrapper is the single visual box;
+   individual .ts-interval-btn segments share borders so they read as one
+   piece, and the active segment fills mint to "light up" the selection. */
+.trading-frequency-buttons {
+    display: flex;
+    flex-wrap: nowrap;
+    margin-top: 2px;
+    border: 1.5px solid #cbd5e1;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #ffffff;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.trading-frequency-buttons:hover {
+    border-color: rgba(150, 235, 191, 0.55);
+}
+
+.trading-frequency-buttons:focus-within {
+    border-color: #96ebbf;
+    box-shadow: 0 0 0 3px rgba(150, 235, 191, 0.20);
+}
+
+.ts-interval-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 8px;
+    font-size: 0.9em;
+    font-weight: 600;
+    line-height: 1.2;
+    background: transparent;
+    color: #475569;
+    border: 0;
+    border-right: 1.5px solid #cbd5e1;
+    border-radius: 0;
+    cursor: pointer;
+    text-align: center;
+    transition: background-color 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+}
+
+.ts-interval-btn:last-child {
+    border-right: none;
+}
+
+.ts-interval-btn:hover {
+    background: rgba(150, 235, 191, 0.14);
+    color: #0a3d24;
+}
+
+.ts-interval-btn.active {
+    background: #96ebbf;
+    color: #0a3d24;
+}
+
+.ts-interval-btn.active:hover {
+    background: #7fdca7;
+}
+
+/* Keyboard focus ring sits inside the segment so it doesn't bleed past the
+   shared outer border of the segmented control. */
+.ts-interval-btn:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px rgba(150, 235, 191, 0.55);
 }
 
 .interval-badge {
@@ -522,7 +685,7 @@ small {
     max-height: 400px;
     overflow-y: auto;
     padding: 15px;
-    background-color: #f8f9fa;
+    background-color: #ffffff;
     border-radius: 8px;
     margin-bottom: 15px;
 }
@@ -766,9 +929,32 @@ small {
     }
 }
 
-/* AI Advisor Card Specific Styles */
+/* "Open Studio" link button in the Import Strategy card header. Uses the
+   dark-green header-text color (#0a3d24) so it reads clearly against the
+   mint card-header background instead of disappearing into it. */
+.btn-open-studio {
+    color: #0a3d24;
+    background-color: rgba(255, 255, 255, 0.45);
+    border: 1px solid #0a3d24;
+    font-weight: 600;
+}
+
+.btn-open-studio:hover,
+.btn-open-studio:focus {
+    color: #ffffff;
+    background-color: #0a3d24;
+    border-color: #0a3d24;
+}
+
+/* AI Advisor Card Specific Styles
+   Tight vertical padding so the green bar hugs the 84px Teeby avatar — the
+   avatar itself stays full-size, only the empty mint space above/below it
+   shrinks. */
 #aiAdvisorCard .card-header {
-    background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+    background: #96ebbf;
+    color: #0a3d24;
+    padding-top: 4px;
+    padding-bottom: 4px;
 }
 
 /* Responsive chat styles */
@@ -991,5 +1177,1028 @@ small {
     100% {
         opacity: 0;
         transform: translateY(-40px) translateX(15px);
+    }
+}
+
+/* =========================================================================
+   Stock Positions roulette
+   -------------------------------------------------------------------------
+   The outer .ticker-input wrapper is invisible — only the three inner
+   controls (text input, number input, delete button) render visibly.
+   The container itself becomes a fixed-height 3D perspective stage that
+   scrolls internally so the page doesn't move, with each row tilting
+   away from center like slots on a roulette wheel.
+   ========================================================================= */
+.ticker-input {
+    background: transparent !important;
+    border: 0 !important;
+    padding: 0 !important;
+    /* No !important here so :hover / :focus-within can paint a halo through. */
+    box-shadow: none;
+    border-radius: 8px;
+    transition: transform 0.15s cubic-bezier(0.2, 0, 0.2, 1),
+                opacity 0.15s ease,
+                box-shadow 0.22s ease;
+}
+
+/* Shine when the row is hovered or any child (text input / shares input /
+   delete button) is focused. The wrapper stays invisible — no border or
+   background — only a brand-green halo glows around the trio of controls. */
+.ticker-input:hover,
+.ticker-input:focus-within {
+    box-shadow:
+        0 0 0 1px rgba(150, 235, 191, 0.55),
+        0 0 22px rgba(150, 235, 191, 0.35),
+        0 4px 14px rgba(150, 235, 191, 0.30);
+}
+
+#tickersContainer {
+    max-height: 240px;
+    overflow-y: auto;
+    /* Don't chain scroll to the parent page when we hit the top/bottom. */
+    overscroll-behavior: contain;
+    perspective: 900px;
+    perspective-origin: 50% 50%;
+    padding: 22px 4px;
+    /* Snap rows to the center of the viewport for a real roulette feel. */
+    scroll-snap-type: y proximity;
+    /* Edges fade out so rows dissolve into the background as they leave center. */
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        transparent 0%,
+        black 16%,
+        black 84%,
+        transparent 100%
+    );
+    mask-image: linear-gradient(
+        to bottom,
+        transparent 0%,
+        black 16%,
+        black 84%,
+        transparent 100%
+    );
+}
+
+#tickersContainer .ticker-input {
+    scroll-snap-align: center;
+    transform-style: preserve-3d;
+    will-change: transform, opacity;
+}
+
+#tickersContainer::-webkit-scrollbar {
+    width: 6px;
+}
+
+#tickersContainer::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Strategy Studio — code editor + console below the AI Advisor.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.strategy-editor {
+    width: 100%;
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, Monaco, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #0f172a;
+    resize: vertical;
+    min-height: 180px;
+    tab-size: 4;
+    -moz-tab-size: 4;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.strategy-editor:focus {
+    outline: none;
+    border-color: #96ebbf;
+    box-shadow: 0 0 0 0.2rem rgba(150, 235, 191, 0.25);
+}
+
+/* CodeMirror wraps the textarea above. We hide the raw textarea and theme
+   the CM surface to match the strategy-editor look (rounded border, mint
+   focus ring) while letting CodeMirror's syntax theme paint the inside. */
+.CodeMirror {
+    height: auto !important;
+    min-height: 320px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, Monaco, monospace;
+    font-size: 13.5px;
+    line-height: 1.55;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.CodeMirror.cm-s-default { background: #ffffff; color: #0f172a; }
+.CodeMirror.CodeMirror-focused {
+    border-color: #96ebbf;
+    box-shadow: 0 0 0 0.2rem rgba(150, 235, 191, 0.25);
+}
+
+.CodeMirror-gutters {
+    border-right: 1px solid rgba(150, 235, 191, 0.25);
+    background: transparent;
+}
+
+/* Hint popup styling (autocomplete menu shown on Tab / Ctrl-Space). */
+.CodeMirror-hints {
+    border: 1px solid rgba(150, 235, 191, 0.55) !important;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+    border-radius: 8px;
+    background: #ffffff;
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, Monaco, monospace;
+    font-size: 12.5px;
+    padding: 4px 0;
+}
+.CodeMirror-hint {
+    padding: 4px 12px;
+    color: #0f172a;
+}
+li.CodeMirror-hint-active {
+    background: #96ebbf !important;
+    color: #0a3d24 !important;
+}
+
+.strategy-output {
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, Monaco, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    background: #0a0a0c;
+    color: #d4d4d8;
+    border-radius: 8px;
+    padding: 12px 14px;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: none;
+}
+
+.strategy-output.is-active { display: block; }
+
+.strategy-output > div {
+    padding: 1px 0;
+}
+
+.strategy-output .log-ts {
+    color: #6b7280;
+    font-size: 11px;
+    margin-right: 8px;
+}
+
+.strategy-output .log-trade {
+    color: #96ebbf;
+    font-weight: 600;
+}
+
+.strategy-output .log-log {
+    color: #e4e4e7;
+}
+
+.strategy-output .log-error {
+    color: #fca5a5;
+}
+
+.strategy-output .log-summary {
+    color: #93c5fd;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+/* Commands guide block (collapsible). */
+.strategy-guide h6 {
+    margin-top: 10px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #475569;
+}
+
+.strategy-guide ul {
+    margin: 0 0 10px 18px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.strategy-guide code {
+    background: rgba(150, 235, 191, 0.20);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: #0a3d24;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, Monaco, monospace;
+}
+
+.strategy-guide pre {
+    background: #0a0a0c;
+    color: #d4d4d8;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.55;
+    overflow-x: auto;
+    margin: 4px 0 8px;
+}
+
+.strategy-guide pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+}
+
+/* ── Studio page chrome ──────────────────────────────────────────────── */
+.studio-body { min-height: 100vh; }
+
+.studio-shell {
+    padding: 0 12px 24px 0;
+    max-width: 1400px;
+    margin: 0;
+}
+
+/* ── Live Trading: portfolio strip, progress bar, read-only preview ───── */
+.live-preview {
+    background: #0f1115;
+    color: #d6deeb;
+    cursor: default;
+    resize: none;
+}
+html[data-theme="light"] .live-preview {
+    background: #f8fafc;
+    color: #0a3d24;
+    border: 1px solid #e2e8f0;
+}
+
+.live-progress {
+    margin-top: 4px;
+}
+.live-progress-bar {
+    background: linear-gradient(90deg, #96ebbf 0%, #6ed4a1 100%);
+}
+
+.live-portfolio-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    background: rgba(150, 235, 191, 0.08);
+    border: 1px solid rgba(150, 235, 191, 0.22);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+html[data-theme="light"] .live-portfolio-strip {
+    background: rgba(150, 235, 191, 0.18);
+    border-color: rgba(150, 235, 191, 0.42);
+}
+.live-portfolio-cell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+}
+.live-portfolio-cell-wide {
+    grid-column: span 1;
+}
+.live-portfolio-cell > span {
+    font-weight: 600;
+    font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.live-output {
+    min-height: 220px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+    .live-portfolio-strip {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.studio-page-header {
+    padding: 16px 4px 4px;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.studio-back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    font-size: 0.85em;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: #475569;
+    border: 1px solid transparent;
+    padding: 6px 10px;
+    border-radius: 8px;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.studio-back-link:hover {
+    background: rgba(150, 235, 191, 0.18);
+    border-color: rgba(150, 235, 191, 0.45);
+    color: #0a3d24;
+}
+
+.studio-page-title {
+    font-family: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+.studio-page-meta small {
+    color: #64748b;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-size: 11px;
+}
+
+/* Name + compile-status row */
+.studio-name-input { max-width: 320px; }
+
+#strategyCompileStatus {
+    font-size: 0.85em;
+}
+
+#strategyCompileStatus.status-ok    { color: #0a3d24; }
+#strategyCompileStatus.status-error { color: #b91c1c; }
+#strategyCompileStatus.status-info  { color: #475569; }
+
+/* Saved-strategies list */
+.saved-strategies-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 520px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.saved-strategy {
+    border: 1px solid rgba(150, 235, 191, 0.35);
+    border-radius: 10px;
+    background: rgba(150, 235, 191, 0.06);
+    padding: 10px 12px;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.saved-strategy:hover {
+    border-color: rgba(150, 235, 191, 0.65);
+    background: rgba(150, 235, 191, 0.10);
+}
+
+.saved-strategy-head {
+    margin-bottom: 4px;
+    gap: 8px;
+}
+
+.saved-strategy-title {
+    font-weight: 600;
+    color: #0a3d24;
+    font-size: 0.95em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.saved-strategy-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.saved-strategy-actions .btn {
+    padding: 2px 8px;
+    font-size: 0.78em;
+}
+
+.saved-strategy-meta {
+    margin-bottom: 6px;
+    font-size: 0.75em;
+}
+
+.saved-strategy-preview {
+    margin: 0;
+    background: #0a0a0c;
+    color: #d4d4d8;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    max-height: 80px;
+    overflow: hidden;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, Monaco, monospace;
+}
+
+.saved-strategies-empty {
+    text-align: center;
+    padding: 18px 8px;
+}
+
+.saved-strategies-empty i {
+    font-size: 1.6em;
+    opacity: 0.5;
+}
+
+/* Import-strategy preview card on the Trading Dashboard. */
+.import-strategy-preview {
+    border: 1px dashed rgba(150, 235, 191, 0.5);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 6px;
+    background: rgba(150, 235, 191, 0.06);
+}
+
+.import-strategy-preview pre {
+    margin: 6px 0 0;
+    background: #0a0a0c;
+    color: #d4d4d8;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    max-height: 220px;
+    overflow: auto;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, Monaco, monospace;
+}
+
+/* ---------- Teeby live-chat widget ----------
+   Floating bottom-right chat-support widget. Launcher = circular Teeby
+   avatar pinned to the viewport. Panel = slide-in chat surface that
+   appears above the launcher when opened. The whole widget is fixed
+   (relative to the iframe viewport) so it floats over page content like
+   Intercom/Drift.
+*/
+.teeby-widget {
+    position: fixed;
+    bottom: 22px;
+    right: 22px;
+    z-index: 1090;
+    pointer-events: none;
+}
+.teeby-widget > * {
+    pointer-events: auto;
+}
+
+/* Launcher button: 64px circle, mint-green gradient ring, Teeby avatar.
+   A separate ring element drives a soft pulse animation while closed. */
+.teeby-launcher {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #0c6136 0%, #1a7d4b 60%, #2da66a 100%);
+    box-shadow: 0 14px 32px rgba(12, 97, 54, 0.35), 0 4px 12px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    transition: transform 0.22s cubic-bezier(.34,1.56,.64,1), box-shadow 0.22s ease;
+}
+.teeby-launcher:hover {
+    transform: translateY(-3px) scale(1.05);
+    box-shadow: 0 18px 40px rgba(12, 97, 54, 0.45), 0 6px 14px rgba(0, 0, 0, 0.25);
+}
+.teeby-launcher:active {
+    transform: translateY(-1px) scale(0.98);
+}
+.teeby-launcher:focus-visible {
+    outline: 3px solid #96ebbf;
+    outline-offset: 3px;
+}
+
+.teeby-launcher-avatar {
+    width: 58px;
+    height: 58px;
+    border-radius: 999px;
+    background: #ffffff;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.9);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+/* Teeby's face sits a touch above the image center, so we scale up and
+   nudge the focal point slightly upward so the face lands dead-center
+   in the 58px circle rather than getting cropped. object-fit: cover
+   guarantees the circle is fully filled regardless of source aspect. */
+.teeby-launcher-img {
+    width: 112%;
+    height: 112%;
+    object-fit: cover;
+    object-position: center 38%;
+    display: block;
+}
+.teeby-launcher-ring {
+    position: absolute;
+    inset: -4px;
+    border-radius: 999px;
+    border: 2px solid rgba(150, 235, 191, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    animation: teeby-ring-pulse 2.6s ease-out infinite;
+}
+
+@keyframes teeby-ring-pulse {
+    0%   { transform: scale(0.85); opacity: 0.7; }
+    70%  { transform: scale(1.35); opacity: 0; }
+    100% { transform: scale(1.35); opacity: 0; }
+}
+
+/* Open-state: hide the launcher entirely — the in-panel × button is the
+   only close affordance the user needs once the chat is open, and a
+   second × on the bottom-right just adds visual noise. The launcher
+   animates back in when the panel is closed. */
+.teeby-widget[data-state="open"] .teeby-launcher {
+    opacity: 0;
+    transform: translateY(8px) scale(0.85);
+    pointer-events: none;
+}
+.teeby-widget[data-state="open"] .teeby-launcher-ring {
+    display: none;
+}
+
+/* Chat panel: pinned to the viewport (position: fixed) with explicit
+   top + bottom so the panel always fits between the top of the iframe
+   and the launcher. Since the launcher hides while the chat is open,
+   we can pull both edges in tight — the panel now uses almost the full
+   iframe height. */
+.teeby-chat-panel {
+    position: fixed;
+    top: 8px;
+    bottom: 12px;
+    right: 22px;
+    width: 460px;
+    max-width: calc(100vw - 44px);
+    min-height: 380px;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #ffffff;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22), 0 8px 20px rgba(0, 0, 0, 0.12);
+    transform: translateY(16px) scale(0.96);
+    transform-origin: bottom right;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.24s ease, transform 0.24s cubic-bezier(.34,1.4,.64,1),
+                visibility 0s 0.24s linear;
+    display: flex;
+    flex-direction: column;
+    z-index: 1090;
+}
+/* Solid mint header bar — same #96ebbf used on every other card header
+   on the dashboard, with the dark-mint title text for contrast. */
+.teeby-chat-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #96ebbf;
+    color: #0a3d24;
+    border-bottom: 1px solid rgba(10, 61, 36, 0.18);
+}
+.teeby-chat-title {
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #0a3d24;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.teeby-widget[data-state="open"] .teeby-chat-panel {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 0.24s ease, transform 0.24s cubic-bezier(.34,1.4,.64,1),
+                visibility 0s 0s linear;
+}
+
+.teeby-chat-panel-inner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    background: inherit;
+}
+
+/* Action buttons live inside the mint header now. Outline-light feel:
+   transparent body + dark mint border/glyph so they read clearly on
+   the #96ebbf surface, with a soft fill on hover. */
+.teeby-chat-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 10px;
+}
+.teeby-action-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.18);
+    color: #0a3d24;
+    border: 1px solid rgba(10, 61, 36, 0.45);
+    box-shadow: none;
+    font-size: 13px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease, color 0.15s ease,
+                border-color 0.15s ease, transform 0.15s ease,
+                box-shadow 0.15s ease;
+}
+.teeby-action-btn i {
+    line-height: 1;
+}
+.teeby-action-btn:hover {
+    background: rgba(255, 255, 255, 0.55);
+    color: #0a3d24;
+    border-color: rgba(10, 61, 36, 0.7);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(10, 61, 36, 0.18);
+}
+.teeby-action-btn:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+.teeby-action-btn:focus-visible {
+    outline: 2px solid #0a3d24;
+    outline-offset: 2px;
+}
+/* Close × picks up a warm red tint on hover so it clearly reads as the
+   destructive/exit affordance. */
+.teeby-action-btn.teeby-close-btn:hover {
+    color: #ffffff;
+    background: #b91c1c;
+    border-color: #b91c1c;
+}
+
+.teeby-chat-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 14px 14px 12px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* The conversation list owns the remaining height; messages scroll
+   inside it, the input + quick chips stay pinned below. */
+.teeby-chat-panel #aiChatMessages {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    padding: 10px 4px 6px;
+    margin-bottom: 10px;
+    background: transparent;
+}
+
+/* Shrink the in-message Teeby avatar inside the floating panel so the
+   text bubble has room to breathe. Same image, smaller footprint. */
+.teeby-chat-panel .teeby-chat-avatar-wrap {
+    width: 36px;
+    height: 36px;
+    margin-top: 0;
+}
+.teeby-chat-panel .teeby-chat-img {
+    width: 36px;
+    height: 36px;
+}
+.teeby-chat-panel .message-content {
+    gap: 8px;
+}
+.teeby-chat-panel .message {
+    margin-bottom: 10px;
+}
+.teeby-chat-panel .message-text {
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    border-radius: 14px;
+}
+.teeby-chat-panel .message-text strong {
+    font-weight: 600;
+}
+.teeby-chat-panel .message-text ul {
+    padding-left: 16px;
+    margin: 4px 0 0;
+}
+.teeby-chat-panel .message-text li {
+    margin-bottom: 2px;
+}
+.teeby-chat-panel .message-time {
+    font-size: 10.5px;
+    margin-left: 44px;
+}
+
+/* Input row + quick chips: tighter so they fit beneath the messages. */
+.teeby-chat-panel .chat-input-container {
+    margin: 0;
+}
+.teeby-chat-panel .chat-input-container .form-control {
+    font-size: 13px;
+    padding: 6px 10px;
+}
+.teeby-chat-panel .chat-input-container .btn {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+.teeby-chat-panel .quick-questions {
+    margin-top: 8px !important;
+}
+/* Centered the quick-question chips so the row reads as a balanced
+   pill group rather than left-aligned with an orphan on the last row. */
+.teeby-chat-panel .quick-questions > .d-flex {
+    justify-content: center;
+}
+.teeby-chat-panel .quick-questions .btn {
+    font-size: 11.5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+}
+/* Compact Cerebras attribution inside the floating panel — the logo
+   stays the same square but scaled down so it doesn't dominate the
+   chat surface. */
+.teeby-chat-panel .cerebras-logo {
+    width: 44px;
+    height: 44px;
+}
+.teeby-chat-panel .border-top.mt-3 {
+    margin-top: 10px !important;
+}
+.teeby-chat-panel .border-top.pt-3 {
+    padding-top: 10px !important;
+}
+
+/* Invite bubble — appears to the left of the launcher, like a chat-rep
+   tooltip ("Hi! Need help?"). Visibility is driven by JS via a
+   [data-invite-shown="true"] attribute on the widget, so the bubble
+   only animates when intentionally shown (no flicker on theme toggle
+   or in-iframe re-render). The user can dismiss it permanently with
+   the × button. */
+.teeby-invite {
+    position: absolute;
+    right: 80px;
+    bottom: 8px;
+    width: 300px;
+    max-width: calc(100vw - 120px);
+    padding: 10px 34px 10px 14px;
+    background: #ffffff;
+    color: #0f172a;
+    font-size: 13.5px;
+    line-height: 1.35;
+    border-radius: 14px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18), 0 4px 10px rgba(0, 0, 0, 0.08);
+    white-space: normal;
+    /* Initial state hides the bubble both via opacity AND visibility, so
+       it can't paint during the brief window between HTML rendering and
+       JS toggling the data-invite-shown attribute. Visibility transition
+       is delayed until after the opacity fade so the fade-OUT still
+       reads as a smooth exit. */
+    opacity: 0;
+    transform: translateX(8px) scale(0.95);
+    transform-origin: right bottom;
+    pointer-events: none;
+    visibility: hidden;
+    transition: opacity 0.28s ease,
+                transform 0.28s cubic-bezier(.34,1.4,.64,1),
+                visibility 0s 0.28s linear;
+}
+.teeby-widget[data-invite-shown="true"] .teeby-invite {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    pointer-events: auto;
+    visibility: visible;
+    transition: opacity 0.28s ease,
+                transform 0.28s cubic-bezier(.34,1.4,.64,1),
+                visibility 0s 0s linear;
+}
+.teeby-invite::after {
+    content: "";
+    position: absolute;
+    right: -8px;
+    bottom: 16px;
+    width: 14px;
+    height: 14px;
+    background: inherit;
+    border-radius: 3px;
+    transform: rotate(45deg);
+    box-shadow: 4px -4px 6px rgba(0, 0, 0, 0.04);
+}
+.teeby-invite-text {
+    display: block;
+}
+.teeby-invite-text strong {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 1px;
+}
+.teeby-invite-close {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1;
+    padding: 4px;
+    cursor: pointer;
+    border-radius: 999px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.teeby-invite-close:hover {
+    background: rgba(15, 23, 42, 0.08);
+    color: #0f172a;
+}
+/* Open panel or explicit dismiss → hide regardless of [data-invite-shown]. */
+.teeby-widget[data-state="open"] .teeby-invite,
+.teeby-widget[data-invite-dismissed="true"] .teeby-invite {
+    opacity: 0 !important;
+    transform: translateX(8px) scale(0.95) !important;
+    pointer-events: none !important;
+}
+
+/* Close button in the panel header. */
+.teeby-close-btn i {
+    line-height: 1;
+}
+
+@media (max-width: 540px) {
+    .teeby-widget {
+        bottom: 16px;
+        right: 16px;
+    }
+    .teeby-chat-panel {
+        width: calc(100vw - 32px);
+        right: 16px;
+        top: 16px;
+        bottom: 92px;
+    }
+    .teeby-invite {
+        display: none;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .teeby-launcher-ring { animation: none; }
+    .teeby-chat-panel,
+    .teeby-launcher,
+    .teeby-launcher-avatar,
+    .teeby-invite {
+        transition: none;
+    }
+}
+
+/* =========================================================================
+   Strategy card (unified Manual | Imported)
+   -------------------------------------------------------------------------
+   Single card on the right column that swaps between two surfaces via an
+   elegant segmented switch in the header:
+     • Manual   — Beta Hedge + Trading Rules
+     • Imported — pick a saved Studio strategy + Run
+   The thumb element slides under the active option to give the switch a
+   live, animated feel. Only one .strategy-pane is visible at a time; the
+   other is `hidden` so it's removed from the layout but stays in the DOM
+   (existing JS keeps finding #tradingRulesContainer, #betaHedgeEnabled,
+   #importStrategySelect, etc. by ID — no JS refactor needed).
+   ========================================================================= */
+.strategy-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.strategy-card-title {
+    flex-shrink: 0;
+}
+.strategy-card-body {
+    /* Slightly tighter top padding so the pane intro line tucks under
+       the segmented switch cleanly. */
+    padding-top: 16px;
+}
+
+.strategy-pane-intro {
+    margin-bottom: 14px;
+}
+
+/* Segmented switch — sits centred-ish in the header. The thumb is an
+   absolutely-positioned pill underneath both options that slides between
+   them on click. */
+.strategy-mode-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    padding: 4px;
+    background: rgba(255, 255, 255, 0.4);
+    border: 1px solid rgba(10, 61, 36, 0.25);
+    border-radius: 999px;
+    gap: 2px;
+    margin-left: auto;
+}
+.strategy-mode-option {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: transparent;
+    border: none;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #0a3d24;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.18s ease, opacity 0.18s ease;
+    white-space: nowrap;
+    opacity: 0.65;
+}
+.strategy-mode-option i {
+    font-size: 0.78rem;
+}
+.strategy-mode-option:hover {
+    opacity: 0.85;
+}
+.strategy-mode-option.active {
+    color: #ffffff;
+    opacity: 1;
+}
+.strategy-mode-option:focus-visible {
+    outline: 2px solid #0a3d24;
+    outline-offset: 2px;
+}
+/* The sliding thumb. Width/left are set inline by JS so it tracks the
+   active option's actual measured rect (handles i18n / icon widths). */
+.strategy-mode-thumb {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: 100px;
+    background: linear-gradient(135deg, #0c6136 0%, #1a7d4b 60%, #2da66a 100%);
+    border-radius: 999px;
+    box-shadow: 0 2px 6px rgba(10, 61, 36, 0.28);
+    transition: left 0.28s cubic-bezier(.34,1.4,.64,1),
+                width 0.28s cubic-bezier(.34,1.4,.64,1);
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Open Studio anchor — only meaningful for the Imported pane, so we fade
+   it out (visibility:hidden so it still reserves header width) when the
+   user is in Manual mode. */
+#strategyCard[data-mode="manual"] .strategy-open-studio {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+#strategyCard[data-mode="imported"] .strategy-open-studio {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 0.2s ease;
+}
+
+@media (max-width: 640px) {
+    .strategy-card-header {
+        gap: 8px;
+    }
+    .strategy-mode-switch {
+        margin-left: 0;
+    }
+    .strategy-mode-option {
+        padding: 6px 10px;
+    }
+    .strategy-mode-option span {
+        display: none;
     }
 }

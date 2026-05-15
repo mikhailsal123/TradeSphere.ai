@@ -1,0 +1,48 @@
+<footer class="ts-site-footer" data-ts-site-footer>
+    <div class="ts-site-footer-inner">
+        <div class="ts-site-footer-toprow">
+            <img
+                src="{{ url_for('static', filename='media/tradesphere-logo.png') }}"
+                alt="TradeSphere"
+                class="ts-site-footer-logo"
+                loading="eager"
+                decoding="sync"
+            >
+            <nav class="ts-site-footer-nav" aria-label="Footer">
+                <a href="#top" class="ts-site-footer-nav-link" data-ts-footer-home-link>Home</a>
+                <span class="ts-site-footer-nav-sep" aria-hidden="true">·</span>
+                <a href="mailto:michael.saleev@example.com" class="ts-site-footer-nav-link">Contact</a>
+                <span class="ts-site-footer-nav-sep" aria-hidden="true">·</span>
+                <a href="#top" class="ts-site-footer-nav-link" data-ts-footer-home-link>About</a>
+            </nav>
+        </div>
+        <p class="ts-site-footer-copy">&copy; 2026 MICHAEL SALEEV. ALL RIGHTS RESERVED.</p>
+    </div>
+</footer>
+<script>
+(function () {
+    function bindFooterLandingLinks() {
+        document.querySelectorAll("[data-ts-footer-home-link]").forEach(function (link) {
+            link.addEventListener("click", function (e) {
+                var inFrame = false;
+                try {
+                    inFrame = window.parent && window.parent !== window;
+                } catch (err) {
+                    inFrame = false;
+                }
+                if (inFrame) {
+                    e.preventDefault();
+                    try {
+                        window.parent.postMessage({ type: "tradesphere-landing-home" }, "*");
+                    } catch (err2) {}
+                }
+            });
+        });
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bindFooterLandingLinks);
+    } else {
+        bindFooterLandingLinks();
+    }
+})();
+</script>

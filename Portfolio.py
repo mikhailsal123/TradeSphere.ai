@@ -27,7 +27,7 @@ class Portfolio:
         else:
             self.past_trades = []
         
-        self.original_value = cash  #keep track of original value fo the portfolio
+        self.original_value = cash  # P&L baseline; SimulationManager may reset to opening NAV after positions
         self.change_over_time = {}  # {timestamp: portfolio_value}
         
         # Hedge margin tracking (separate from regular cash)
@@ -353,7 +353,28 @@ class Portfolio:
             "Bought %s sh %s @ %.2f (cost %.2f); cash %.2f",
             shares, ticker, execution_price, cost, self.cash,
         )
-    
+
+    def establish_position(self, ticker, shares, timestamp):
+        """
+        Record shares you already own at sim start — does not spend cash.
+        Used for "Stock Positions" in the UI: initial holdings are separate
+        from the cash pile; subsequent buys still go through buy() and
+        deduct cash (or future margin paths).
+        """
+        if not shares or shares <= 0:
+            return
+        sd = self._stock_data(ticker)
+        sd.curtime = timestamp
+        market_price = sd.get_price()
+        if market_price is None:
+            _plog.debug("establish_position: no price for %s", ticker)
+            return
+        self.positions[ticker] = self.positions.get(ticker, 0) + int(shares)
+        _plog.debug(
+            "Established %s sh %s @ %.2f (no cash debit); cash still %.2f",
+            shares, ticker, market_price, self.cash,
+        )
+
     def get_portfolio_stats(self, timestamp):
         """
         Get comprehensive portfolio statistics including cash validation info.

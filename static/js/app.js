@@ -77,14 +77,11 @@ function teebyChatAvatarHtml(small) {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOMContentLoaded - Initializing app...');
 
-    // Duration slider update
+    // Duration slider update — refresh the "Last X hours/days of trading"
+    // summary + min/max captions on every slider tick.
     const durationSlider = document.getElementById('durationDays');
-    const durationValue = document.getElementById('durationValue');
-    
-    if (durationSlider && durationValue) {
-        durationSlider.addEventListener('input', function() {
-            updateDurationLimits();
-        });
+    if (durationSlider) {
+        durationSlider.addEventListener('input', updateDurationLimits);
     }
     
     // Form submission
@@ -142,7 +139,175 @@ document.addEventListener('DOMContentLoaded', function() {
             validateTradingRuleTicker(sel);
         }
     });
+
+    // 3D roulette tilt for the Stock Positions list — must run after the rows
+    // exist in the DOM and after layout has settled so getBoundingClientRect()
+    // returns real numbers.
+    initTickerRoulette();
+
+    // Show the correct starting hedge margin (50% of Initial Cash) from page load,
+    // and keep it in sync if the user edits the Initial Cash input. Once a sim
+    // is running, updateHedgeMarginBalance(data) overwrites this with live values.
+    initInitialMarginDisplay();
+
+    // Import Strategy (pick a saved Studio strategy + Run → /run_strategy → console output).
+    initImportStrategy();
+
+    // Strategy card segmented switch (Manual ⇄ Imported).
+    initStrategyModeSwitch();
+
+    // Floating Teeby live-chat widget (launcher → slide-in chat panel).
+    initTeebyWidget();
 });
+
+/* =========================================================================
+   Initial cash helpers (live comma formatting + numeric reader)
+   -------------------------------------------------------------------------
+   The Initial Cash Deposit input is now <input type="text"> with a "$"
+   prefix and comma-grouped digits (e.g. "110,000"). readInitialCash()
+   strips commas before parseFloat so every existing reader keeps working,
+   and formatInitialCash() rewrites the field as the user types while doing
+   its best to preserve the cursor position relative to the digits.
+   ========================================================================= */
+function readInitialCash() {
+    const el = document.getElementById('initialCash');
+    if (!el) return NaN;
+    return parseFloat(String(el.value || '').replace(/,/g, ''));
+}
+
+function formatInitialCash() {
+    const input = document.getElementById('initialCash');
+    if (!input) return;
+    const raw = String(input.value || '');
+    const digitsOnly = raw.replace(/[^\d]/g, '');
+    if (!digitsOnly) {
+        input.value = '';
+        return;
+    }
+
+    // Count digits to the LEFT of the caret so we can restore it after
+    // re-formatting (insertions of commas would otherwise shift it).
+    const caret = input.selectionStart ?? raw.length;
+    const digitsLeftOfCaret = raw.slice(0, caret).replace(/[^\d]/g, '').length;
+
+    const num = parseInt(digitsOnly, 10);
+    const formatted = num.toLocaleString('en-US');
+    input.value = formatted;
+
+    // Walk the formatted string from the start, counting digits, and place
+    // the caret right after the same Nth digit we had before.
+    let pos = 0;
+    let seen = 0;
+    while (pos < formatted.length && seen < digitsLeftOfCaret) {
+        if (/\d/.test(formatted[pos])) seen++;
+        pos++;
+    }
+    try { input.setSelectionRange(pos, pos); } catch (_e) { /* ignore */ }
+}
+
+/* =========================================================================
+   Initial hedge margin display
+   -------------------------------------------------------------------------
+   Mirrors Portfolio.py: `hedge_margin_available = cash * 0.5`. The HTML
+   shipped with $0.00 hardcoded; this keeps the displayed value matching
+   the formula the backend will actually use when the sim starts.
+   ========================================================================= */
+function updateInitialMarginDisplay() {
+    const cashInput = document.getElementById('initialCash');
+    const hedgeMarginElement = document.getElementById('hedgeMarginBalance');
+    if (!cashInput || !hedgeMarginElement) return;
+
+    const cash = readInitialCash();
+    if (!Number.isFinite(cash) || cash < 0) return;
+
+    const margin = cash * 0.5;
+    const formatted = margin.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+
+    const valueSpan = hedgeMarginElement.querySelector('span:last-of-type');
+    if (valueSpan) {
+        valueSpan.textContent = `$${formatted}`;
+    }
+}
+
+function initInitialMarginDisplay() {
+    const cashInput = document.getElementById('initialCash');
+    if (!cashInput) return;
+    // Format whatever was in there on page load + on every keystroke.
+    formatInitialCash();
+    cashInput.addEventListener('input', () => {
+        formatInitialCash();
+        updateInitialMarginDisplay();
+    });
+    updateInitialMarginDisplay();
+}
+
+/* =========================================================================
+   Stock Positions roulette tilt
+   -------------------------------------------------------------------------
+   On every scroll of #tickersContainer (Stock Positions) we measure each .ticker-input's
+   distance from the container's vertical center and apply a 3D transform
+   (rotateX + translateZ + scale) plus opacity falloff. The container's CSS
+   perspective + mask edges give the slot-wheel feel; this script supplies
+   the per-row motion.
+   ========================================================================= */
+function applyTickerRouletteEffect() {
+    const container = document.getElementById('tickersContainer');
+    if (!container) return;
+    const items = container.querySelectorAll('.ticker-input');
+    if (!items.length) return;
+
+    const cRect = container.getBoundingClientRect();
+    const cCenter = cRect.top + cRect.height / 2;
+    const half = cRect.height / 2;
+    if (half <= 0) return; // container not laid out yet
+
+    items.forEach((item) => {
+        const r = item.getBoundingClientRect();
+        const itemCenter = r.top + r.height / 2;
+        const offset = itemCenter - cCenter; // - above center, + below
+        const t = Math.min(1, Math.abs(offset) / half); // 0 at center → 1 at edge
+
+        // Above center → tilt toward viewer (positive rotateX);
+        // below center → tilt away (negative rotateX).
+        const rotateX = -(offset / half) * 30;
+        const scale = 1 - t * 0.22;
+        const opacity = 1 - t * 0.55;
+        const translateZ = -t * 55;
+
+        item.style.transform =
+            `perspective(800px) rotateX(${rotateX}deg) translateZ(${translateZ}px) scale(${scale})`;
+        item.style.opacity = String(Math.max(0.4, opacity));
+    });
+}
+
+function initTickerRoulette() {
+    const container = document.getElementById('tickersContainer');
+    if (!container) return;
+
+    let queued = false;
+    const schedule = () => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => {
+            queued = false;
+            applyTickerRouletteEffect();
+        });
+    };
+
+    // Initial apply (also re-applies after fonts/images shift layout).
+    schedule();
+    setTimeout(schedule, 100);
+
+    container.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+
+    // Re-apply whenever rows are added/removed (addTicker / removeTicker).
+    const observer = new MutationObserver(schedule);
+    observer.observe(container, { childList: true });
+}
 
 async function startSimulation(e) {
     e.preventDefault();
@@ -162,9 +327,16 @@ async function startSimulation(e) {
     const progressCard = document.getElementById('progressCard');
     
     startBtn.disabled = true;
-    startBtn.innerHTML = '<span class="loading-spinner"></span> Starting...';
+    startBtn.innerHTML = '<span class="loading-spinner"></span> …';
     progressCard.style.display = 'block';
-    
+
+    // Bring the results panel into view as soon as the user kicks off a sim.
+    try {
+        progressCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {
+        progressCard.scrollIntoView();
+    }
+
     fetch('/start_simulation', {
         method: 'POST',
         headers: {
@@ -187,6 +359,10 @@ async function startSimulation(e) {
     .then((data) => {
         if (data.success) {
             currentSimulationId = data.simulation_id;
+            // Stale benchmark series (aligned to the previous run's timestamps) — drop them.
+            for (const k of Object.keys(_benchmarkCache)) delete _benchmarkCache[k];
+            _activeBenchmarks.clear();
+            document.querySelectorAll('.benchmark-chip.active').forEach((c) => c.classList.remove('active'));
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
             startStatusPolling();
@@ -446,13 +622,13 @@ function showFinalResults(data) {
             const pnlCls = isFin(fm.total_pnl) ? (fm.total_pnl >= 0 ? 'positive' : 'negative') : '';
             
             finalMetrics.innerHTML = `
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">$${fmtMoney(fm.final_value)}</div>
                     <div class="metric-label">Final Value</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value ${retCls}">
                         ${fmtPctReturn(fm.total_return_pct)}
@@ -460,7 +636,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Total Return</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value ${pnlCls}">
                         $${fmtMoney(fm.total_pnl)}
@@ -468,7 +644,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Total PnL</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         ${fmtFixed(fm.volatility_pct, 2)}${isFin(fm.volatility_pct) ? '%' : ''}
@@ -476,7 +652,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Volatility (ann.)</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         ${fmtFixed(fm.sharpe_ratio, 3)}
@@ -484,7 +660,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Sharpe Ratio</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         ${fmtFixed(fm.beta, 3)}
@@ -493,7 +669,7 @@ function showFinalResults(data) {
                     ${fm.beta_interpretation ? `<div class="metric-subtitle">${String(fm.beta_interpretation).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         ${fmtFixed(fm.correlation, 3)}
@@ -501,7 +677,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Market Correlation</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         ${Number.isFinite(Number(fm.hedge_trades_count)) ? fm.hedge_trades_count : 0}
@@ -509,7 +685,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Hedge Trades</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         $${fmtMoney(isFin(fm.total_hedge_margin_used) ? fm.total_hedge_margin_used : 0)}
@@ -517,7 +693,7 @@ function showFinalResults(data) {
                     <div class="metric-label">Margin Used</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">
                         $${fmtMoney(isFin(fm.hedge_margin_remaining) ? fm.hedge_margin_remaining : 0)}
@@ -530,6 +706,61 @@ function showFinalResults(data) {
         
             finalMetricsCard.style.display = 'block';
             console.log('Final metrics card should now be visible');
+
+            // Park the viewport ON the grid itself (not the card header / not the bottom of the page).
+            // We defer with rAF + a short timeout so this runs AFTER showAIAdvisor()/showPlotsCard()
+            // mutate layout (expanding the chat, revealing the plots card), otherwise their layout
+            // shifts would knock our scroll position off-target.
+            const focusGrid = () => {
+                const target = finalMetrics || finalMetricsCard;
+                try {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } catch {
+                    target.scrollIntoView();
+                }
+            };
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => setTimeout(focusGrid, 60));
+            });
+
+            // Mosaic entrance — each tile flips on the Y-axis from back to front, staggered
+            // diagonally so they read as a real mosaic of cards turning over to reveal values.
+            try {
+                const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                if (reduceMotion) return;
+
+                const cards = Array.from(finalMetrics.querySelectorAll('.metric-card'));
+                finalMetrics.classList.add('is-animating-in'); // hides tiles until WAAPI is queued
+
+                requestAnimationFrame(() => {
+                    cards.forEach((card, idx) => {
+                        const row = Math.floor(idx / 5);
+                        const col = idx % 5;
+                        // Slower diagonal stagger so the cascade is clearly readable as a wave.
+                        const delay = (row + col) * 180;
+                        // Monotonic 180° → 0° flip. The middle keyframe (edge-on at 90°)
+                        // is implicit because the rotation is continuous; we only need
+                        // start + end. Subtle translateZ + scale adds a touch of depth
+                        // so the card "lifts" into place without overshooting.
+                        const keyframes = [
+                            { opacity: 1, transform: 'rotateY(180deg) translateZ(-30px) scale(0.94)' },
+                            { opacity: 1, transform: 'rotateY(0deg) translateZ(0) scale(1)' },
+                        ];
+                        card.animate(keyframes, {
+                            duration: 1500,
+                            delay,
+                            // Smooth deceleration — the flip slows as it lands flat,
+                            // like a real card settling. No overshoot, no bounce.
+                            easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
+                            fill: 'forwards',
+                        });
+                    });
+                    setTimeout(() => finalMetrics.classList.remove('is-animating-in'), 30);
+                });
+            } catch (e) {
+                console.warn('Metric mosaic animation skipped:', e);
+                finalMetrics.classList.remove('is-animating-in');
+            }
         } else {
             console.log('No final metrics found in data');
         }
@@ -627,29 +858,63 @@ function collectFormData() {
 
     const startDateStr = computeSimulationStartDate(tradingFrequency, duration_days, duration_hours);
 
+    // Which strategy lane is the user on? The Strategy card's segmented
+    // switch governs whether the simulation engine evaluates manual rules or
+    // executes the imported script body at each interval. Same setup
+    // (intervals, dates, positions, initial cash, hedge); only the
+    // per-tick decision logic differs.
+    const strategyCard = document.getElementById('strategyCard');
+    const strategyMode = strategyCard && strategyCard.dataset.mode === 'imported'
+        ? 'imported'
+        : 'manual';
+
     const formData = {
-        initial_cash: parseFloat(document.getElementById('initialCash').value),
+        initial_cash: readInitialCash(),
         duration_days: duration_days,
         duration_hours: duration_hours,
         start_date: startDateStr,
         trading_frequency: tradingFrequency,
         tickers: tickers,
-        trading_rules: tradingRules,
-        beta_hedge_enabled: document.getElementById('betaHedgeEnabled').checked
+        trading_rules: strategyMode === 'manual' ? tradingRules : [],
+        beta_hedge_enabled: document.getElementById('betaHedgeEnabled').checked,
+        strategy_mode: strategyMode,
     };
-    
+
+    if (strategyMode === 'imported') {
+        const select = document.getElementById('importStrategySelect');
+        const id = select ? select.value : '';
+        const saved = loadSavedStrategies().find((s) => s.id === id);
+        if (saved) {
+            formData.strategy_code = saved.code || '';
+            formData.strategy_name = saved.name || '';
+            formData.strategy_id = saved.id;
+        }
+    }
+
     return formData;
 }
 
 function validateForm(data) {
     if (data.tickers.length === 0) {
-        alert('Please add at least one stock to trade.');
+        alert('Please add at least one stock position.');
         return false;
     }
-    
+
     if (data.initial_cash < 1000) {
         alert('Initial cash must be at least $1,000.');
         return false;
+    }
+
+    // Imported mode swaps manual rules for an imported script; require the
+    // user to actually pick one before we POST.
+    if (data.strategy_mode === 'imported') {
+        if (!data.strategy_code || !data.strategy_code.trim()) {
+            alert(
+                'You\'re on "Imported" mode but no saved strategy is selected.\n\n' +
+                'Pick one from the dropdown in the Strategy card, or save one in the Studio first.'
+            );
+            return false;
+        }
     }
     
     // Check if all tickers are valid
@@ -724,71 +989,47 @@ function validateForm(data) {
         }
     }
     
-    // Validate portfolio value doesn't exceed initial cash
-    const portfolioValidation = validatePortfolioValue(data);
-    if (!portfolioValidation.isValid) {
-        alert(portfolioValidation.message);
-        return false;
-    }
-    
     return true;
 }
 
+/**
+ * Stock Positions are opening holdings — they do not spend the cash pile.
+ * Simulations establish them at market without debiting cash; buys during
+ * the run still use cash (and hedge flows use margin as before). No
+ * client-side "positions vs cash" gate here.
+ */
 function validatePortfolioValue(data) {
-    const initialCash = data.initial_cash;
-    let totalValue = 0;
-    let issues = [];
-    
-    // Check initial positions
-    data.tickers.forEach(ticker => {
-        if (ticker.shares && ticker.shares > 0) {
-            // Estimate value using average stock prices (rough estimates)
-            const estimatedPrice = getEstimatedStockPrice(ticker.ticker);
-            const positionValue = estimatedPrice * ticker.shares;
-            totalValue += positionValue;
-            
-            if (positionValue > initialCash * 0.5) {
-                issues.push(`${ticker.ticker}: ${ticker.shares} shares ≈ $${positionValue.toLocaleString()} (${(positionValue/initialCash*100).toFixed(1)}% of portfolio)`);
-            }
-        }
-    });
-    
-    // Check trading rules for potential large purchases
-    data.trading_rules.forEach(rule => {
-        if (rule.action === 'buy' && rule.shares && rule.threshold) {
-            const estimatedPrice = getEstimatedStockPrice(rule.ticker);
-            const potentialCost = estimatedPrice * rule.shares;
-            
-            if (potentialCost > initialCash * 0.3) {
-                issues.push(`Buy rule for ${rule.ticker}: ${rule.shares} shares ≈ $${potentialCost.toLocaleString()} (${(potentialCost/initialCash*100).toFixed(1)}% of portfolio)`);
-            }
-        }
-    });
-    
-    // Check if total estimated value exceeds initial cash
-    if (totalValue > initialCash) {
-        return {
-            isValid: false,
-            message: `Portfolio value ($${totalValue.toLocaleString()}) exceeds initial cash ($${initialCash.toLocaleString()}). Please reduce position sizes or increase initial cash.`
-        };
-    }
-    
     return {
         isValid: true,
-        message: 'Portfolio validation passed.'
+        severity: 'success',
+        message: 'Portfolio validation passed.',
+        details: [],
     };
 }
 
-function getEstimatedStockPrice(ticker) {
-    // Rough estimates for common stocks (in USD)
-    const priceEstimates = {
-        'AAPL': 150, 'MSFT': 300, 'GOOGL': 140, 'AMZN': 120, 'TSLA': 200,
-        'NVDA': 800, 'META': 300, 'NFLX': 400, 'GOOG': 140, 'BRK.A': 500000,
-        'BRK.B': 350, 'JPM': 150, 'JNJ': 160, 'V': 250, 'PG': 150,
-        'UNH': 500, 'HD': 300, 'MA': 400, 'DIS': 100, 'PYPL': 60
-    };
-    
-    return priceEstimates[ticker] || 100; // Default to $100 if unknown
+/**
+ * Trading Time Interval is a segmented button group. Click handlers call this
+ * to: (a) flip the active class, (b) mirror the value into the hidden
+ * #tradingFrequency input so existing readers keep working unchanged, and
+ * (c) trigger downstream UI updates (duration slider min/max, help text, etc).
+ */
+function selectTradingFrequency(btn) {
+    if (!btn) return;
+    const value = btn.dataset.value;
+    if (!value) return;
+    const hidden = document.getElementById('tradingFrequency');
+    if (hidden) hidden.value = value;
+
+    const group = btn.closest('.trading-frequency-buttons');
+    if (group) {
+        group.querySelectorAll('.ts-interval-btn').forEach((b) => {
+            const on = b === btn;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+
+    if (typeof updateDurationLimits === 'function') updateDurationLimits();
 }
 
 function updateDurationLimits() {
@@ -810,7 +1051,7 @@ function updateDurationLimits() {
             fallback: 30,
             title: 'Simulation length',
             unit: 'days',
-            help: 'Daily closes · max 365 days',
+            help: 'Daily midprice trading (1 year max)',
         },
         '1m': {
             mode: 'hours',
@@ -819,7 +1060,7 @@ function updateDurationLimits() {
             fallback: 3,
             title: 'Hours of the trading day to include',
             unit: 'hours',
-            help: '1m bars · slider = session hours (max 6)',
+            help: '1m interval trading (6 hour limit)',
         },
         '5m': {
             mode: 'hours',
@@ -828,7 +1069,7 @@ function updateDurationLimits() {
             fallback: 6,
             title: 'Hours of the trading day to include',
             unit: 'hours',
-            help: '5m bars · max 12 hours',
+            help: '5m interval trading (12 hour limit)',
         },
         '15m': {
             mode: 'hours',
@@ -837,7 +1078,7 @@ function updateDurationLimits() {
             fallback: 8,
             title: 'Hours to cover (up to one day)',
             unit: 'hours',
-            help: '15m bars · max 24 hours',
+            help: '15m interval trading (Day limit)',
         },
         '60m': {
             mode: 'days',
@@ -846,7 +1087,7 @@ function updateDurationLimits() {
             fallback: 3,
             title: 'Calendar days',
             unit: 'days',
-            help: 'Hourly bars · max 7 days',
+            help: 'Hourly interval trading (Week limit)',
         },
     };
 
@@ -866,11 +1107,13 @@ function updateDurationLimits() {
         durationSlider.value = String(v);
     }
 
-    durationValue.textContent = String(v);
-    durationUnit.textContent = p.unit;
-    if (durationLabelTitle) {
-        durationLabelTitle.textContent = p.title;
-    }
+    // The inline slider label (#durationValue / #durationUnit / #durationLabelTitle)
+    // was removed in favor of the "Last X hours of trading" summary above —
+    // guard the writes so this function keeps working if any are absent.
+    if (durationValue) durationValue.textContent = String(v);
+    if (durationUnit) durationUnit.textContent = p.unit;
+    if (durationLabelTitle) durationLabelTitle.textContent = p.title;
+
     const unitWord = (n) => {
         if (p.unit === 'hours') return n === 1 ? 'hour' : 'hours';
         return n === 1 ? 'day' : 'days';
@@ -879,18 +1122,27 @@ function updateDurationLimits() {
     maxDuration.textContent = `${p.max} ${unitWord(p.max)}`;
     frequencyHelp.textContent = p.help;
 
-    const now = new Date();
-    if (p.mode === 'days') {
-        const span = parseInt(durationSlider.value, 10) || p.fallback;
-        const st = new Date(now.getFullYear(), now.getMonth(), now.getDate() - span);
-        dateRangeInfo.innerHTML = `
-            <strong>${st.toLocaleDateString()}</strong> → <strong>${now.toLocaleDateString()}</strong>
-            <br><small class="text-muted">~${span} days</small>`;
-    } else {
-        const h = parseInt(durationSlider.value, 10) || p.fallback;
-        dateRangeInfo.innerHTML = `
-            <strong>~${h}h</strong> intraday
-            <br><small class="text-muted">Recent sessions; provider limits may apply</small>`;
+    // "Last X hours/days of trading" summary that tracks the slider value live.
+    const dateRangeSummary = document.getElementById('dateRangeSummary');
+    if (dateRangeSummary) {
+        dateRangeSummary.textContent = `Last ${v} ${unitWord(v)} of trading`;
+    }
+
+    // Detail line: only show the concrete calendar window in daily-style modes
+    // (where it actually adds info on top of the summary). Intraday modes
+    // would have just repeated "~Xh intraday" so we hide the line entirely.
+    if (dateRangeInfo) {
+        if (p.mode === 'days') {
+            const span = parseInt(durationSlider.value, 10) || p.fallback;
+            const now = new Date();
+            const st = new Date(now.getFullYear(), now.getMonth(), now.getDate() - span);
+            dateRangeInfo.innerHTML =
+                `<strong>${st.toLocaleDateString()}</strong> → <strong>${now.toLocaleDateString()}</strong>`;
+            dateRangeInfo.hidden = false;
+        } else {
+            dateRangeInfo.innerHTML = '';
+            dateRangeInfo.hidden = true;
+        }
     }
 }
 
@@ -940,27 +1192,37 @@ function validatePortfolioInRealTime() {
 }
 
 function updatePortfolioValidationUI(validation) {
-    // Find or create validation status element
-    let statusElement = document.getElementById('portfolioValidationStatus');
+    const statusElement = document.getElementById('portfolioValidationStatus');
     if (!statusElement) {
-        statusElement = document.createElement('div');
-        statusElement.id = 'portfolioValidationStatus';
-        statusElement.className = 'alert alert-info mt-2';
-        
-        // Insert after the tickers container
-        const tickersContainer = document.getElementById('tickersContainer');
-        if (tickersContainer) {
-            tickersContainer.parentNode.insertBefore(statusElement, tickersContainer.nextSibling);
-        }
+        return;
     }
-    
+
+    const escapeAttr = (s) => String(s).replace(/"/g, '&quot;');
+    const details = Array.isArray(validation.details) ? validation.details : [];
+    const tooltip = details.length ? details.join('\n') : validation.message;
+
+    statusElement.removeAttribute('hidden');
+    statusElement.classList.remove('is-success', 'is-error', 'is-warning');
+    statusElement.classList.add('is-visible');
+
     if (validation.isValid) {
-        statusElement.className = 'alert alert-success mt-2';
-        statusElement.innerHTML = '<i class="fas fa-check-circle"></i> Portfolio validation passed';
-    } else {
-        statusElement.className = 'alert alert-warning mt-2';
-        statusElement.innerHTML = `<i class="fas fa-exclamation-triangle" title="${validation.message}"></i> ${validation.message}`;
+        statusElement.classList.add('is-success');
+        statusElement.removeAttribute('title');
+        statusElement.innerHTML =
+            '<span class="d-inline-flex align-items-center gap-1"><i class="fas fa-check-circle"></i><span>Portfolio validation passed</span></span>';
+        return;
     }
+
+    if (validation.severity === 'error') {
+        statusElement.classList.add('is-error');
+        statusElement.setAttribute('title', escapeAttr(tooltip));
+        statusElement.innerHTML = `<span class="d-inline-flex align-items-center gap-1"><i class="fas fa-times-circle"></i><span>${validation.message}</span></span>`;
+        return;
+    }
+
+    statusElement.classList.add('is-warning');
+    statusElement.setAttribute('title', escapeAttr(tooltip));
+    statusElement.innerHTML = `<span class="d-inline-flex align-items-center gap-1"><i class="fas fa-exclamation-triangle"></i><span>${validation.message}</span></span>`;
 }
 
 function resetForm() {
@@ -968,7 +1230,7 @@ function resetForm() {
     const stopBtn = document.getElementById('stopBtn');
     
     startBtn.disabled = false;
-    startBtn.innerHTML = '<i class="fas fa-play"></i> Start Simulation';
+    startBtn.innerHTML = '<i class="fas fa-play"></i> Start';
     startBtn.style.display = 'block';
     stopBtn.style.display = 'none';
     
@@ -1217,23 +1479,199 @@ function initializeAIChat() {
 }
 
 function showAIAdvisor() {
-    console.log('showAIAdvisor called, currentSimulationId:', currentSimulationId);
-    const aiAdvisorCard = document.getElementById('aiAdvisorCard');
-    if (aiAdvisorCard) {
-        console.log('Showing AI advisor card');
-        aiAdvisorCard.style.display = 'block';
-        
-        // Auto-expand chat if not visible
-        if (!aiChatVisible) {
-            const chatCollapse = document.getElementById('aiChatCollapse');
-            if (chatCollapse && !chatCollapse.classList.contains('show')) {
-                const collapseInstance = new bootstrap.Collapse(chatCollapse, {show: true});
-                aiChatVisible = true;
+    // The Teeby widget is now a floating live-chat launcher that's always
+    // present in the DOM (see #teebyWidget). Nothing to show/hide on the
+    // post-simulation hook anymore — this function is kept so existing
+    // call sites still resolve. We could nudge the user by briefly
+    // bouncing the launcher here, but the pulse-ring animation already
+    // draws attention.
+    return;
+}
+
+/* ---------- Strategy card segmented switch (Manual ⇄ Imported) ----------
+   The Strategy card on the right column hosts two panes (Manual rules
+   and Imported saved-strategy). The segmented switch in the header
+   flips between them: the active option lights up via a sliding "thumb"
+   pill that animates left/right under the buttons. Selection persists
+   to localStorage so reloads remember the user's preference.
+
+   The hidden pane is `[hidden]` — existing JS still finds elements by ID
+   (e.g. #betaHedgeEnabled, #tradingRulesContainer, #importStrategySelect)
+   regardless of which pane is on screen, so no downstream refactor is
+   needed for collectFormData / margin display / etc. */
+function initStrategyModeSwitch() {
+    const card = document.getElementById('strategyCard');
+    if (!card) return;
+    const switchEl = card.querySelector('.strategy-mode-switch');
+    if (!switchEl) return;
+    const options = Array.from(switchEl.querySelectorAll('.strategy-mode-option'));
+    const thumb = switchEl.querySelector('.strategy-mode-thumb');
+    const panes = {
+        manual: document.getElementById('strategyManualPane'),
+        imported: document.getElementById('strategyImportedPane'),
+    };
+
+    const MODE_KEY = 'tradesphere_strategy_mode';
+    let stored = null;
+    try { stored = localStorage.getItem(MODE_KEY); } catch (_) { /* private mode */ }
+    const initial = (stored === 'manual' || stored === 'imported') ? stored : 'manual';
+
+    const moveThumb = (activeBtn) => {
+        if (!thumb || !activeBtn) return;
+        // Measure relative to the switch's content box (padding-aware).
+        const switchRect = switchEl.getBoundingClientRect();
+        const btnRect = activeBtn.getBoundingClientRect();
+        const left = btnRect.left - switchRect.left;
+        const width = btnRect.width;
+        thumb.style.left = `${left}px`;
+        thumb.style.width = `${width}px`;
+    };
+
+    const setMode = (mode) => {
+        if (mode !== 'manual' && mode !== 'imported') return;
+        card.setAttribute('data-mode', mode);
+        let activeBtn = null;
+        options.forEach((btn) => {
+            const on = btn.dataset.mode === mode;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+            if (on) activeBtn = btn;
+        });
+        Object.entries(panes).forEach(([k, el]) => {
+            if (!el) return;
+            if (k === mode) el.removeAttribute('hidden');
+            else el.setAttribute('hidden', '');
+        });
+        moveThumb(activeBtn);
+        try { localStorage.setItem(MODE_KEY, mode); } catch (_) { /* ignore */ }
+    };
+
+    options.forEach((btn) => {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+    });
+
+    // Initial state — apply persisted/default mode, then re-measure the
+    // thumb after layout settles (initial getBoundingClientRect can be
+    // off if web fonts haven't loaded yet).
+    setMode(initial);
+    requestAnimationFrame(() => moveThumb(switchEl.querySelector('.strategy-mode-option.active')));
+    window.addEventListener('resize', () => {
+        moveThumb(switchEl.querySelector('.strategy-mode-option.active'));
+    });
+}
+
+/* ---------- Teeby live-chat widget toggle ----------
+   Wires the floating launcher to the slide-in chat panel. Open/close
+   state is mirrored on a data-state attribute and on aria-expanded so
+   CSS + screen readers stay in sync. Escape closes the panel; clicking
+   the launcher toggles it; the in-panel close (X) button closes it. */
+function initTeebyWidget() {
+    const widget = document.getElementById('teebyWidget');
+    const launcher = document.getElementById('teebyLauncher');
+    const panel = document.getElementById('teebyChatPanel');
+    const closeBtn = document.getElementById('teebyCloseBtn');
+    const inviteCloseBtn = document.getElementById('teebyInviteClose');
+    if (!widget || !launcher || !panel) return;
+
+    // The Teeby invite bubble only greets the user when they first
+    // arrive on the dashboard from the landing page. The Next.js shell
+    // signals that arrival by appending `?invite=1` to the iframe URL
+    // (only on the landing → dashboard launch — header taps and
+    // in-iframe links do NOT carry this). Other navigations / reloads
+    // get no greeting, which is the intended live-chat-rep behaviour.
+    //
+    // We also defensively wipe stale dismissal flags from earlier
+    // builds that used to persist suppression to localStorage.
+    try {
+        localStorage.removeItem('tradesphere_teeby_invite_dismissed');
+        localStorage.removeItem('tradesphere_teeby_invite_dismissed_v2');
+    } catch (_) { /* private mode / disabled — ignore */ }
+
+    const inviteEl = document.getElementById('teebyInvite');
+    let shouldGreet = false;
+    try {
+        shouldGreet = new URLSearchParams(window.location.search).get('invite') === '1';
+    } catch (_) { /* very old browsers — leave greet=false */ }
+
+    if (shouldGreet) {
+        // Show the invite bubble after a short delay so it lands after
+        // the rest of the dashboard has settled. JS-driven (vs a CSS
+        // @keyframes) so theme toggles don't strand it mid-state. The
+        // element starts with inline `opacity:0;visibility:hidden` to
+        // guarantee no first-paint flash — we strip that here, then on
+        // the next animation frame toggle the attribute so the CSS
+        // transition has a starting point to animate from.
+        setTimeout(() => {
+            if (widget.getAttribute('data-invite-dismissed') === 'true') return;
+            if (widget.getAttribute('data-state') === 'open') return;
+            if (inviteEl) inviteEl.removeAttribute('style');
+            requestAnimationFrame(() => {
+                if (widget.getAttribute('data-invite-dismissed') === 'true') return;
+                if (widget.getAttribute('data-state') === 'open') return;
+                widget.setAttribute('data-invite-shown', 'true');
+            });
+        }, 1200);
+    }
+
+    // Hide the bubble for the current page only. Re-arriving from the
+    // landing page (which adds ?invite=1) will greet the user again;
+    // header/in-iframe navigations won't.
+    const dismissInvite = () => {
+        widget.removeAttribute('data-invite-shown');
+        widget.setAttribute('data-invite-dismissed', 'true');
+    };
+
+    const setState = (open) => {
+        // First open strips the FOUC-guard inline style so the CSS
+        // transitions can take over from here on. Without this the
+        // chat panel would briefly paint at default browser styles
+        // before the cascade settled — same problem we fixed for the
+        // invite bubble, same fix.
+        if (open && panel.hasAttribute('style')) {
+            panel.removeAttribute('style');
+        }
+        widget.setAttribute('data-state', open ? 'open' : 'closed');
+        launcher.setAttribute('aria-expanded', open ? 'true' : 'false');
+        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        if (open) {
+            // Opening the chat hides the invite (it's done its job for now).
+            // Nothing persisted — next page load will greet the user again.
+            dismissInvite();
+            const input = document.getElementById('aiChatInput');
+            if (input) {
+                // Defer focus so the slide-in transition can start first.
+                setTimeout(() => input.focus({ preventScroll: true }), 220);
             }
         }
-    } else {
-        console.log('AI advisor card not found or no simulation ID');
+    };
+
+    launcher.addEventListener('click', () => {
+        const isOpen = widget.getAttribute('data-state') === 'open';
+        setState(!isOpen);
+    });
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            setState(false);
+            launcher.focus({ preventScroll: true });
+        });
     }
+
+    if (inviteCloseBtn) {
+        inviteCloseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dismissInvite();
+        });
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (widget.getAttribute('data-state') !== 'open') return;
+        setState(false);
+        launcher.focus({ preventScroll: true });
+    });
 }
 
 function sendAIMessage() {
@@ -1474,8 +1912,9 @@ function showPlotsCard() {
         console.log('plotsCard element:', plotsCard);
         if (plotsCard) {
             plotsCard.style.display = 'block';
-            plotsCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            
+            // Intentionally NOT scrolling here — the chart card lives in the sidebar.
+            // We want the page to stay on the metrics grid (scrolled into view by showFinalResults).
+
             // Load the default plot (portfolio value)
             console.log('Loading default plot...');
             loadPlot('value');
@@ -1488,72 +1927,563 @@ function showPlotsCard() {
 }
 
 
-function loadPlot(plotType) {
-    console.log('loadPlot called with plotType:', plotType);
-    try {
-        const plotContainer = document.getElementById('plotContainer');
-        const plotLoading = document.getElementById('plotLoading');
-        
-        if (!plotContainer || !plotLoading) {
-            console.error('plotContainer or plotLoading not found');
-            return;
+// ---------- Chart.js rendering ----------
+// Cache the active chart and the last-fetched series so the user can swap plot
+// types and toggle theme without re-hitting the backend.
+let _activeChart = null;
+let _chartCache = null; // { timestamps, values, original_value, trading_frequency }
+let _currentPlotType = 'value';
+// Benchmark overlays (visible on the percentage chart only).
+const _benchmarkCache = {}; // { 'SPY': { name, percent_returns: [...] }, ... }
+const _activeBenchmarks = new Set(); // canonical symbols currently overlaid
+const _BENCHMARK_STYLES = {
+    SPY: { name: 'S&P 500', dark: '#fbbf24', light: '#b45309' },
+    QQQ: { name: 'NASDAQ',  dark: '#a78bfa', light: '#6d28d9' },
+};
+
+function _chartTheme() {
+    const dark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
+    return dark
+        ? {
+            stroke: '#22d3ee',
+            strokeStrong: '#0891b2',
+            fillTop: 'rgba(34, 211, 238, 0.32)',
+            fillBottom: 'rgba(34, 211, 238, 0.0)',
+            grid: 'rgba(244, 244, 245, 0.07)',
+            text: '#cbd5e1',
+            textMuted: '#94a3b8',
+            baseline: 'rgba(244, 244, 245, 0.45)',
+            positive: '#34d399',
+            negative: '#f87171',
+            tooltipBg: 'rgba(12, 12, 14, 0.96)',
+            tooltipBorder: '#3f3f46',
+            tooltipText: '#f4f4f5',
         }
-    
-    // Show loading indicator
-    plotLoading.style.display = 'block';
-    plotContainer.style.display = 'none';
-    
-    // Update button states
-    document.querySelectorAll('[data-plot-type]').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    document.querySelector(`[data-plot-type="${plotType}"]`).classList.add('active');
-    
-    // Determine which endpoint to use
-    let plotUrl;
-    if (currentSimulationId && currentSimulationId !== 'test-simulation-123') {
-        plotUrl = `/plot/${currentSimulationId}/${plotType}`;
-    } else {
-        plotUrl = `/plot/current/${plotType}`;
+        : {
+            stroke: '#0284c7',
+            strokeStrong: '#4f46e5',
+            fillTop: 'rgba(2, 132, 199, 0.22)',
+            fillBottom: 'rgba(2, 132, 199, 0.0)',
+            grid: 'rgba(15, 23, 42, 0.08)',
+            text: '#334155',
+            textMuted: '#64748b',
+            baseline: 'rgba(15, 23, 42, 0.35)',
+            positive: '#059669',
+            negative: '#dc2626',
+            tooltipBg: 'rgba(255, 255, 255, 0.98)',
+            tooltipBorder: '#cbd5e1',
+            tooltipText: '#0f172a',
+        };
+}
+
+function _fmtCurrency(v) {
+    const abs = Math.abs(v);
+    const opts = abs >= 1000
+        ? { maximumFractionDigits: 0 }
+        : { maximumFractionDigits: 2 };
+    return '$' + Number(v).toLocaleString(undefined, opts);
+}
+
+function _fmtSignedCurrency(v) {
+    const sign = v >= 0 ? '+' : '-';
+    return sign + _fmtCurrency(Math.abs(v));
+}
+
+function _fmtPercent(v) {
+    const sign = v >= 0 ? '+' : '';
+    return `${sign}${Number(v).toFixed(2)}%`;
+}
+
+function _fmtTimestampLabel(ts) {
+    // Backend emits 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM'.
+    if (!ts) return '';
+    if (ts.length <= 10) return ts;
+    return ts.slice(5).replace('T', ' '); // 'MM-DD HH:MM' — compact for axis
+}
+
+function _showPlotState(state) {
+    const placeholder = document.getElementById('plotPlaceholder');
+    const wrap = document.getElementById('plotCanvasWrap');
+    const err = document.getElementById('plotError');
+    if (placeholder) placeholder.style.display = state === 'placeholder' ? 'block' : 'none';
+    if (wrap) wrap.style.display = state === 'chart' ? 'block' : 'none';
+    if (err) err.style.display = state === 'error' ? 'block' : 'none';
+}
+
+function _renderChart(plotType) {
+    if (!_chartCache || !_chartCache.timestamps.length) {
+        _showPlotState('error');
+        const err = document.getElementById('plotError');
+        if (err) err.innerHTML = `
+            <i class="fas fa-exclamation-triangle fa-lg mb-2"></i>
+            <div class="small">No data points to plot yet — let the simulation run a bit longer.</div>`;
+        return;
     }
-    
-    // Fetch the plot
-    fetch(plotUrl)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Display the plot
-                plotContainer.innerHTML = `<img src="${data.image}" alt="${plotType} plot" class="img-fluid">`;
-                plotContainer.style.display = 'block';
-            } else {
-                // Show error message
-                plotContainer.innerHTML = `
-                    <div class="text-center text-danger">
-                        <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
-                        <p>Error loading plot: ${data.error}</p>
-                        <small class="text-dark">Make sure your simulation has completed successfully.</small>
-                    </div>
-                `;
-                plotContainer.style.display = 'block';
-            }
-        })
-        .catch(error => {
-            console.error('Error loading plot:', error);
-            plotContainer.innerHTML = `
-                <div class="text-center text-danger">
-                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
-                    <p>Failed to load plot. Please try again.</p>
-                </div>
-            `;
-            plotContainer.style.display = 'block';
-        })
-        .finally(() => {
-            plotLoading.style.display = 'none';
+
+    const canvas = document.getElementById('plotCanvas');
+    if (!canvas || typeof Chart === 'undefined') return;
+
+    const theme = _chartTheme();
+    const { timestamps, values, original_value: baseline } = _chartCache;
+
+    // Compute the series for the active plot type.
+    // NOTE: value / percent / pnl are linear transforms of the same data, so the LINE SHAPE
+    // is identical. We differentiate them stylistically: cyan area (value), diverging
+    // green/red area split at 0% (percent), red/green bars (pnl).
+    let series, label, yFormatter, tooltipValueFmt;
+    let renderMode = 'line';        // 'line' | 'divergingLine' | 'bars'
+    if (plotType === 'percentage') {
+        series = values.map((v) => baseline ? ((v - baseline) / baseline) * 100 : 0);
+        label = 'Portfolio Return';
+        yFormatter = (v) => _fmtPercent(v);
+        tooltipValueFmt = (v) => _fmtPercent(v);
+        renderMode = 'divergingLine';
+    } else if (plotType === 'pnl') {
+        series = values.map((v) => v - baseline);
+        label = 'P&L';
+        yFormatter = (v) => _fmtSignedCurrency(v);
+        tooltipValueFmt = (v) => _fmtSignedCurrency(v);
+        renderMode = 'bars';
+    } else {
+        series = values.slice();
+        label = 'Portfolio Value';
+        yFormatter = (v) => _fmtCurrency(v);
+        tooltipValueFmt = (v) => _fmtCurrency(v);
+        renderMode = 'line';
+    }
+
+    // Build a vertical gradient fill from the canvas context.
+    const ctx = canvas.getContext('2d');
+    const wrap = document.getElementById('plotCanvasWrap');
+    const h = (wrap && wrap.clientHeight) || 320;
+    const cyanGradient = ctx.createLinearGradient(0, 0, 0, h);
+    cyanGradient.addColorStop(0, theme.fillTop);
+    cyanGradient.addColorStop(1, theme.fillBottom);
+
+    const baselineAnnotationY = plotType === 'pnl' || plotType === 'percentage' ? 0 : baseline;
+
+    // Per-renderMode dataset configuration.
+    let primaryDataset;
+    let chartType = 'line';
+    if (renderMode === 'bars') {
+        // P&L: red/green bars per interval.
+        chartType = 'bar';
+        primaryDataset = {
+            label,
+            data: series,
+            backgroundColor: (c) => {
+                const v = c.parsed && typeof c.parsed.y === 'number' ? c.parsed.y : 0;
+                return v >= 0 ? hexToRgba(theme.positive, 0.85) : hexToRgba(theme.negative, 0.85);
+            },
+            hoverBackgroundColor: (c) => {
+                const v = c.parsed && typeof c.parsed.y === 'number' ? c.parsed.y : 0;
+                return v >= 0 ? theme.positive : theme.negative;
+            },
+            borderWidth: 0,
+            borderRadius: 3,
+            maxBarThickness: 24,
+        };
+    } else if (renderMode === 'divergingLine') {
+        // Percentage: line with diverging green/red fill split at 0%.
+        primaryDataset = {
+            label,
+            data: series,
+            borderColor: theme.strokeStrong,
+            backgroundColor: 'rgba(0,0,0,0)',
+            borderWidth: 2,
+            fill: {
+                target: { value: 0 },
+                above: hexToRgba(theme.positive, 0.22),
+                below: hexToRgba(theme.negative, 0.22),
+            },
+            tension: 0.28,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: theme.strokeStrong,
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            spanGaps: true,
+            segment: {
+                borderColor: (c) => {
+                    const y0 = c.p0.parsed.y;
+                    const y1 = c.p1.parsed.y;
+                    return (y0 + y1) / 2 >= 0 ? theme.positive : theme.negative;
+                },
+            },
+        };
+    } else {
+        // Default: portfolio value as a smooth cyan area line.
+        primaryDataset = {
+            label,
+            data: series,
+            borderColor: theme.stroke,
+            backgroundColor: cyanGradient,
+            borderWidth: 2,
+            fill: 'origin',
+            tension: 0.28,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: theme.strokeStrong,
+            pointHoverBorderColor: '#fff',
+            pointHoverBorderWidth: 2,
+            spanGaps: true,
+        };
+    }
+
+    const chartConfig = {
+        type: chartType,
+        data: {
+            labels: timestamps.map(_fmtTimestampLabel),
+            datasets: [primaryDataset],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: theme.tooltipBg,
+                    borderColor: theme.tooltipBorder,
+                    borderWidth: 1,
+                    titleColor: theme.tooltipText,
+                    bodyColor: theme.tooltipText,
+                    padding: 10,
+                    displayColors: false,
+                    callbacks: {
+                        title: (items) => items.length ? timestamps[items[0].dataIndex] : '',
+                        label: (c) => `  ${label}: ${tooltipValueFmt(c.parsed.y)}`,
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        color: theme.textMuted,
+                        maxRotation: 0,
+                        autoSkip: false,
+                        // Show only first and last X-axis labels to keep things tidy.
+                        callback: function (value, index, allTicks) {
+                            const last = allTicks.length - 1;
+                            return index === 0 || index === last ? this.getLabelForValue(value) : '';
+                        },
+                    },
+                    grid: { color: theme.grid, drawBorder: false },
+                },
+                y: {
+                    ticks: {
+                        color: theme.textMuted,
+                        callback: (v) => yFormatter(v),
+                    },
+                    grid: { color: theme.grid, drawBorder: false },
+                },
+            },
+        },
+    };
+
+    // Dashed baseline (original value for 'value', zero for percent/pnl).
+    // Skip for bar mode — bars naturally anchor to 0.
+    if (renderMode !== 'bars') {
+        chartConfig.data.datasets.push({
+            type: 'line',
+            label: '_baseline',
+            data: series.map(() => baselineAnnotationY),
+            borderColor: theme.baseline,
+            borderWidth: 1,
+            borderDash: [4, 4],
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            fill: false,
+            tension: 0,
+            order: 99,
         });
+        chartConfig.options.plugins.tooltip.filter = (item) => item.dataset.label !== '_baseline';
+    }
+
+    // Overlay benchmarks on the percentage chart (S&P 500, NASDAQ).
+    if (renderMode === 'divergingLine' && _activeBenchmarks.size > 0) {
+        const isDark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
+        _activeBenchmarks.forEach((sym) => {
+            const benchmark = _benchmarkCache[sym];
+            if (!benchmark || !Array.isArray(benchmark.percent_returns)) return;
+            const style = _BENCHMARK_STYLES[sym] || { name: sym, dark: '#cbd5e1', light: '#475569' };
+            const color = isDark ? style.dark : style.light;
+            chartConfig.data.datasets.push({
+                type: 'line',
+                label: style.name,
+                data: benchmark.percent_returns,
+                borderColor: color,
+                backgroundColor: 'rgba(0,0,0,0)',
+                borderWidth: 1.75,
+                fill: false,
+                tension: 0.28,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                pointHoverBackgroundColor: color,
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 2,
+                spanGaps: true,
+                order: 50,
+            });
+        });
+        // Re-enable colored swatches in the tooltip so the user sees which line is which.
+        chartConfig.options.plugins.tooltip.displayColors = true;
+        chartConfig.options.plugins.tooltip.callbacks.label = (c) => {
+            // Format portfolio in percent (same as Y axis), benchmarks too (already %).
+            if (c.dataset.label === '_baseline') return null;
+            const v = c.parsed.y;
+            return v == null
+                ? `  ${c.dataset.label}: —`
+                : `  ${c.dataset.label}: ${_fmtPercent(v)}`;
+        };
+    }
+
+    if (_activeChart) {
+        _activeChart.destroy();
+        _activeChart = null;
+    }
+    _activeChart = new Chart(ctx, chartConfig);
+    _showPlotState('chart');
+}
+
+function hexToRgba(hex, alpha) {
+    // Accepts #rgb / #rrggbb / rgb()/rgba(); falls through if already rgba.
+    if (!hex) return `rgba(0,0,0,${alpha})`;
+    if (hex.startsWith('rgba') || hex.startsWith('rgb(')) return hex;
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function _updateBenchmarkChipsVisibility() {
+    const wrap = document.getElementById('benchmarkOverlays');
+    if (!wrap) return;
+    wrap.style.display = _currentPlotType === 'percentage' ? 'flex' : 'none';
+}
+
+function _setBenchmarkChipActive(sym, active) {
+    const chip = document.querySelector(`.benchmark-chip[data-benchmark="${sym}"]`);
+    if (chip) chip.classList.toggle('active', !!active);
+}
+
+function _setBenchmarkChipLoading(sym, loading) {
+    const chip = document.querySelector(`.benchmark-chip[data-benchmark="${sym}"]`);
+    if (chip) chip.classList.toggle('is-loading', !!loading);
+}
+
+async function _ensureBenchmarkLoaded(sym) {
+    if (_benchmarkCache[sym]) return true;
+    const url = (currentSimulationId && currentSimulationId !== 'test-simulation-123')
+        ? `/benchmark_data/${currentSimulationId}/${sym}`
+        : `/benchmark_data/current/${sym}`;
+    _setBenchmarkChipLoading(sym, true);
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.percent_returns)) {
+            _benchmarkCache[sym] = data;
+            return true;
+        }
+        console.warn('Benchmark fetch failed:', data && data.error);
+        return false;
+    } catch (e) {
+        console.error('Benchmark fetch error:', e);
+        return false;
+    } finally {
+        _setBenchmarkChipLoading(sym, false);
+    }
+}
+
+async function _toggleBenchmark(sym) {
+    if (_currentPlotType !== 'percentage') return;
+    if (_activeBenchmarks.has(sym)) {
+        _activeBenchmarks.delete(sym);
+        _setBenchmarkChipActive(sym, false);
+        _renderChart(_currentPlotType);
+        return;
+    }
+    const ok = await _ensureBenchmarkLoaded(sym);
+    if (!ok) return;
+    _activeBenchmarks.add(sym);
+    _setBenchmarkChipActive(sym, true);
+    _renderChart(_currentPlotType);
+}
+
+// Wire up chip clicks once (idempotent across hot reloads).
+if (!window.__benchmarkChipsBound) {
+    window.__benchmarkChipsBound = true;
+    document.addEventListener('click', (ev) => {
+        const chip = ev.target.closest('.benchmark-chip');
+        if (!chip) return;
+        const sym = chip.getAttribute('data-benchmark');
+        if (sym) _toggleBenchmark(sym);
+    });
+}
+
+function loadPlot(plotType) {
+    _currentPlotType = plotType;
+    _updateBenchmarkChipsVisibility();
+    try {
+        const plotLoading = document.getElementById('plotLoading');
+
+        document.querySelectorAll('[data-plot-type]').forEach((btn) => btn.classList.remove('active'));
+        const activeBtn = document.querySelector(`[data-plot-type="${plotType}"]`);
+        if (activeBtn) activeBtn.classList.add('active');
+
+        if (plotLoading) plotLoading.style.display = 'block';
+        _showPlotState('placeholder');
+
+        const url = (currentSimulationId && currentSimulationId !== 'test-simulation-123')
+            ? `/chart_data/${currentSimulationId}`
+            : `/chart_data/current`;
+
+        fetch(url)
+            .then((response) => response.json())
+            .then((data) => {
+                if (data && data.success) {
+                    _chartCache = data;
+                    _renderChart(plotType);
+                } else {
+                    _chartCache = null;
+                    _showPlotState('error');
+                    const err = document.getElementById('plotError');
+                    if (err) err.innerHTML = `
+                        <i class="fas fa-exclamation-triangle fa-lg mb-2"></i>
+                        <div class="small">Couldn't load chart data${data && data.error ? `: ${data.error}` : ''}.</div>
+                        <small class="text-dark">Run a simulation to completion to generate charts.</small>`;
+                }
+            })
+            .catch((error) => {
+                console.error('Error loading chart data:', error);
+                _chartCache = null;
+                _showPlotState('error');
+                const err = document.getElementById('plotError');
+                if (err) err.innerHTML = `
+                    <i class="fas fa-exclamation-triangle fa-lg mb-2"></i>
+                    <div class="small">Failed to reach the server.</div>`;
+            })
+            .finally(() => {
+                if (plotLoading) plotLoading.style.display = 'none';
+            });
     } catch (error) {
         console.error('Error in loadPlot:', error);
     }
 }
 
+// Re-render the active chart when the user toggles light/dark so colors stay on-brand.
+(function watchThemeForCharts() {
+    if (typeof MutationObserver === 'undefined') return;
+    const obs = new MutationObserver((muts) => {
+        for (const m of muts) {
+            if (m.attributeName === 'data-theme' && _chartCache) {
+                _renderChart(_currentPlotType);
+                break;
+            }
+        }
+    });
+    obs.observe(document.documentElement, { attributes: true });
+})();
+
 // Make clearAIChat function globally accessible for testing
 window.clearAIChat = clearAIChat;
+
+/* =========================================================================
+   Import Strategy (Trading Dashboard)
+   -------------------------------------------------------------------------
+   Editing happens in /strategy_studio. Here the user just picks a saved
+   strategy out of the same localStorage list, hits Run, and we POST its code
+   to /run_strategy seeded with the dashboard's "Initial Cash Deposit".
+   ========================================================================= */
+
+const STRATEGY_STORAGE_KEY = 'tradesphere_strategies_v1';
+
+function loadSavedStrategies() {
+    try {
+        const raw = localStorage.getItem(STRATEGY_STORAGE_KEY);
+        const list = raw ? JSON.parse(raw) : [];
+        return Array.isArray(list) ? list : [];
+    } catch (_e) {
+        return [];
+    }
+}
+
+function initImportStrategy() {
+    // The Imported pane is preview-only on the dashboard. Execution lives on
+    // the Live Trading page; here the user just picks a saved strategy out
+    // of localStorage and sees its code so they know what's loaded.
+    const select = document.getElementById('importStrategySelect');
+    const preview = document.getElementById('importStrategyPreview');
+    const previewCode = document.getElementById('importStrategyPreviewCode');
+    const liveLink = document.getElementById('importStrategyLiveLink');
+    const openStudioLink = document.getElementById('openStudioLink');
+    if (!select || !preview || !previewCode) return;
+
+    // Keep the Studio + Live Trading shortcuts theme-synced.
+    const currentTheme = () =>
+        document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    if (openStudioLink) {
+        try {
+            openStudioLink.setAttribute('href', `/strategy_studio?embed=1&theme=${currentTheme()}`);
+        } catch (_e) { /* ignore */ }
+    }
+    if (liveLink) {
+        try {
+            liveLink.setAttribute('href', `/live_trading?embed=1&theme=${currentTheme()}`);
+        } catch (_e) { /* ignore */ }
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+        );
+    }
+
+    function showPreview() {
+        const id = select.value;
+        const s = loadSavedStrategies().find((x) => x.id === id);
+        if (!s) {
+            preview.hidden = true;
+            previewCode.textContent = '';
+            return;
+        }
+        previewCode.textContent = s.code || '';
+        preview.hidden = false;
+    }
+
+    function refresh() {
+        const list = loadSavedStrategies()
+            .slice()
+            .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+        const previousId = select.value;
+        if (list.length === 0) {
+            select.innerHTML = '<option value="">— No saved strategies —</option>';
+            preview.hidden = true;
+            previewCode.textContent = '';
+            return;
+        }
+        select.innerHTML = list
+            .map((s) => `<option value="${s.id}">${escapeHtml(s.name)}${s.compiled ? '' : ' (uncompiled)'}</option>`)
+            .join('');
+        const keep = list.find((s) => s.id === previousId);
+        select.value = keep ? previousId : list[0].id;
+        showPreview();
+    }
+
+    select.addEventListener('change', showPreview);
+
+    // Refresh when the user comes back to this tab (e.g. after saving a new
+    // strategy in the Studio in another tab) or storage gets mutated.
+    window.addEventListener('focus', refresh);
+    window.addEventListener('storage', (e) => {
+        if (e.key === STRATEGY_STORAGE_KEY) refresh();
+    });
+
+    refresh();
+}
+
+// `renderImportOutput` (previously rendered the dashboard's inline import-run
+// output) has been retired — the dashboard no longer executes imported code.
+// Live Trading renders its own log via static/js/live_trading.js.

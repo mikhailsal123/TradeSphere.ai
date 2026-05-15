@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ theme }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Trading · TradeSphere</title>
+    <script>
+    (function () {
+        function applyTheme(t) {
+            if (t !== 'light' && t !== 'dark') return;
+            document.documentElement.setAttribute('data-theme', t);
+            try { localStorage.setItem('tradesphere-theme', t); } catch (e) {}
+            var btn = document.getElementById('tsThemeToggle');
+            if (btn) {
+                btn.innerHTML = t === 'dark'
+                    ? '<i class="fas fa-sun" aria-hidden="true"></i>'
+                    : '<i class="fas fa-moon" aria-hidden="true"></i>';
+            }
+        }
+        try {
+            var u = new URLSearchParams(location.search).get('theme');
+            var s = localStorage.getItem('tradesphere-theme');
+            var t = (u === 'light' || u === 'dark') ? u : ((s === 'light' || s === 'dark') ? s : '{{ theme }}');
+            applyTheme(t);
+        } catch (e) {}
+        window.addEventListener('message', function (e) {
+            var d = e.data;
+            if (d && d.type === 'tradesphere-theme') applyTheme(d.theme);
+        });
+        document.addEventListener('DOMContentLoaded', function () {
+            var b = document.getElementById('tsThemeToggle');
+            if (b) {
+                b.addEventListener('click', function () {
+                    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                    applyTheme(next);
+                });
+            }
+            // Tell the parent shell (Next.js) which view this iframe is now
+            // showing so the top-level nav can highlight "Live Trading".
+            try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'tradesphere-view', view: 'live_trading' }, '*');
+                }
+            } catch (e) { /* ignore */ }
+        });
+    })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- CodeMirror 5 (read-only preview for the selected strategy). -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/tradesphere-theme.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
+</head>
+<body id="top" class="studio-body">
+    <div class="container-fluid studio-shell">
+        <div class="studio-page">
+            <div class="studio-page-header d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-3">
+                    <a href="{{ url_for('index', embed=1, theme=theme) }}" class="studio-back-link" title="Back to Trading Dashboard">
+                        <i class="fas fa-arrow-left"></i>
+                        <span>Trading Dashboard</span>
+                    </a>
+                    <span class="studio-page-title">Live Trading</span>
+                </div>
+                <div class="studio-page-meta">
+                    <small>Pick &middot; Run live &middot; 5 min &middot; 1 tick / sec</small>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-1">
+                <!-- Left: strategy picker + read-only code preview -->
+                <div class="col-lg-5">
+                    <div class="card" id="liveStrategyCard">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Strategy</h5>
+                            <small class="text-dark" id="liveSavedCount">0 saved</small>
+                        </div>
+                        <div class="card-body">
+                            <label for="liveStrategySelect" class="form-label small fw-semibold text-dark">Saved strategy</label>
+                            <select id="liveStrategySelect" class="form-select form-select-sm mb-3">
+                                <option value="">— No saved strategies —</option>
+                            </select>
+
+                            <label class="form-label small fw-semibold text-dark mb-1">Code preview (read-only)</label>
+                            <textarea id="liveStrategyPreview" class="strategy-editor live-preview" rows="14" spellcheck="false" readonly placeholder="Open the Studio to create and save a strategy, then come back here to run it live."></textarea>
+
+                            <div class="d-flex align-items-center gap-2 mt-3 flex-wrap">
+                                <div class="input-group input-group-sm" style="max-width: 220px;">
+                                    <span class="input-group-text">$</span>
+                                    <input type="text" inputmode="numeric" class="form-control" id="liveInitialCash" value="100,000" aria-label="Starting cash">
+                                </div>
+                                <small class="text-dark">Starting cash</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: run controls, live log, portfolio status -->
+                <div class="col-lg-7">
+                    <div class="card" id="liveRunCard">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Live Run</h5>
+                            <small class="text-dark" id="liveStatusLine">Idle</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                <button class="btn btn-success" type="button" id="liveStartBtn" disabled>
+                                    <i class="fas fa-bolt"></i> Start Live Trading
+                                </button>
+                                <button class="btn btn-outline-danger" type="button" id="liveStopBtn" disabled>
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                                <button class="btn btn-outline-secondary" type="button" id="liveClearBtn">
+                                    <i class="fas fa-eraser"></i> Clear
+                                </button>
+                                <small class="text-dark ms-auto" id="liveHint">Runs 5 min · 1 tick/sec · only successful trades are logged</small>
+                            </div>
+
+                            <div class="live-progress mb-2">
+                                <div class="progress" style="height: 6px;">
+                                    <div class="progress-bar live-progress-bar" id="liveProgressBar" role="progressbar" style="width: 0%;" aria-valuemin="0" aria-valuemax="300"></div>
+                                </div>
+                                <div class="d-flex justify-content-between mt-1">
+                                    <small class="text-dark" id="liveProgressLabel">0:00 / 5:00</small>
+                                    <small class="text-dark" id="liveTradesLabel">0 trades</small>
+                                </div>
+                            </div>
+
+                            <div class="live-portfolio-strip mb-3" id="livePortfolioStrip">
+                                <div class="live-portfolio-cell">
+                                    <small class="text-dark d-block">Cash</small>
+                                    <span id="liveCash">$100,000.00</span>
+                                </div>
+                                <div class="live-portfolio-cell">
+                                    <small class="text-dark d-block">Portfolio</small>
+                                    <span id="livePortfolioValue">$100,000.00</span>
+                                </div>
+                                <div class="live-portfolio-cell">
+                                    <small class="text-dark d-block">P&amp;L</small>
+                                    <span id="livePnl">$0.00</span>
+                                </div>
+                                <div class="live-portfolio-cell live-portfolio-cell-wide">
+                                    <small class="text-dark d-block">Positions</small>
+                                    <span id="livePositions">—</span>
+                                </div>
+                            </div>
+
+                            <div id="liveOutput" class="strategy-output live-output" aria-live="polite"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% include '_site_footer.html' %}
+
+    {% if not embed %}
+    <button type="button" class="ts-theme-toggle" id="tsThemeToggle" title="Toggle light / dark mode" aria-label="Toggle light or dark mode">
+        <i class="fas fa-{{ 'sun' if theme == 'dark' else 'moon' }}" aria-hidden="true"></i>
+    </button>
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/live_trading.js') }}?v={{ range(1000, 9999) | random }}"></script>
+</body>
+</html>
