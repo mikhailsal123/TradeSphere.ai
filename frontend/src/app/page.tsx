@@ -270,7 +270,7 @@ const MainPage = () => {
                                             Portfolio Strategy Lab that suits your needs
                                         </h1>
                                         <p className="text-[1.00625rem] font-light leading-relaxed text-white/90 sm:text-[1.0925rem]">
-                                            Seamlessly build, execute, and refine trading strategies that earn your
+                                            Seamlessly build, execute, and perfect trading strategies that earn your
                                             confidence before a dollar is on the line.
                                         </p>
                                     </div>

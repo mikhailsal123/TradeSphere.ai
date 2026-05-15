@@ -11,14 +11,14 @@ type Step = {
 
 const STEPS: Step[] = [
     {
-        id: "configure",
-        label: "Configure",
+        id: "allocate",
+        label: "Allocate",
         title: (
             <>
-                <span className="text-[#96ebbf]">Configure</span> your portfolio
+                <span className="text-[#96ebbf]">Allocate</span> your portfolio
             </>
         ),
-        body: "Set tickers, weights, and positions in the dashboard. Built-in validation catches issues early so every simulation starts from a portfolio you can stand behind.",
+        body: "Set up your cash balance, trading frequency, and stock positions. Select the time interval that works best with your trading approach.",
     },
     {
         id: "simulate",
@@ -39,6 +39,16 @@ const STEPS: Step[] = [
             </>
         ),
         body: "Stack results against benchmarks, inspect plots, and lean on AI-assisted commentary to find what worked, what broke, and what to tweak next—without another engineering sprint.",
+    },
+    {
+        id: "launch",
+        label: "Launch",
+        title: (
+            <>
+                <span className="text-[#96ebbf]">Launch</span> when you are ready
+            </>
+        ),
+        body: "Take the same stack from simulation to Live Trading: start a run, watch status, and stop cleanly—without relearning a separate system.",
     },
 ];
 
@@ -131,14 +141,14 @@ export function LandingCapabilityScroll({ theme }: LandingCapabilityScrollProps)
                     id="landing-capability-heading"
                     className={`mx-auto mt-3 max-w-3xl scroll-mt-28 text-center text-2xl font-medium leading-snug tracking-tight sm:text-3xl md:text-[2rem] ${titleMuted}`}
                 >
-                    Build, test, and ship strategies with the same clarity as{" "}
-                    <span className="text-[#96ebbf]">production tooling</span>—without the guesswork.
+                    TradeSphere is a platform where you can write, test, and ship strategies with{" "}
+                    <span className="text-[#96ebbf]">production-level quality</span>.
                 </h2>
 
                 <div className="mt-8 space-y-4 md:mt-10 md:space-y-0">
                     {STEPS.map((s, i) => {
                         const on = i === active;
-                        const railOnRight = i === 1;
+                        const railOnRight = i % 2 === 1;
 
                         const rail = (
                             <ol
@@ -188,7 +198,7 @@ export function LandingCapabilityScroll({ theme }: LandingCapabilityScrollProps)
                         return (
                             <div
                                 key={s.id}
-                                id={i === 0 ? "landing-step-configure" : undefined}
+                                id={i === 0 ? "landing-step-allocate" : undefined}
                                 ref={(el) => setRef(el, i)}
                                 className="min-h-[min(56vh,420px)] scroll-mt-28 md:grid md:min-h-[58vh] md:grid-cols-12 md:gap-12 lg:gap-16"
                             >
