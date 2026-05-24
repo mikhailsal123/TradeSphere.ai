@@ -1,15 +1,30 @@
 {
   "pages": {
-    "/page": [
-      "static/chunks/[root-of-the-server]__0f0ba101._.css",
+    "/_not-found/page": [
+      "static/chunks/[root-of-the-server]__38e6a56b._.css",
       "static/chunks/node_modules_next_dist_e910db8a._.js",
       "static/chunks/src_app_providers_tsx_9c18dcf0._.js",
       "static/chunks/src_app_layout_tsx_0a548d63._.js",
-      "static/chunks/node_modules_next_dist_client_components_builtin_global-error_70a91341.js",
+      "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_57d40746._.js",
+      "static/chunks/node_modules_next_dist_compiled_react-dom_1e674e59._.js",
+      "static/chunks/node_modules_next_dist_compiled_next-devtools_index_a9cb0712.js",
+      "static/chunks/node_modules_next_dist_compiled_5150ccfd._.js",
+      "static/chunks/node_modules_next_dist_client_cf1d9188._.js",
+      "static/chunks/node_modules_next_dist_b0daae9a._.js",
+      "static/chunks/node_modules_@swc_helpers_cjs_b3dc30d6._.js",
+      "static/chunks/_a0ff3932._.js",
+      "static/chunks/turbopack-_cdba956c._.js"
+    ],
+    "/page": [
+      "static/chunks/[root-of-the-server]__38e6a56b._.css",
+      "static/chunks/node_modules_next_dist_e910db8a._.js",
+      "static/chunks/src_app_providers_tsx_9c18dcf0._.js",
+      "static/chunks/src_app_layout_tsx_0a548d63._.js",
+      "static/chunks/node_modules_next_dist_client_components_builtin_global-error_acd3a169.js",
       "static/chunks/[next]_internal_font_google_dm_sans_94f05495_module_7b9a00a2.css",
-      "static/chunks/[root-of-the-server]__99d6c955._.js",
+      "static/chunks/[root-of-the-server]__a186e06d._.js",
       "static/chunks/node_modules_8df0c90d._.js",
-      "static/chunks/src_app_page_tsx_70a91341._.js",
+      "static/chunks/src_app_page_tsx_acd3a169._.js",
       "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_57d40746._.js",
       "static/chunks/node_modules_next_dist_compiled_react-dom_1e674e59._.js",
       "static/chunks/node_modules_next_dist_compiled_next-devtools_index_a9cb0712.js",

@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DM_Sans } from "next/font/google";
 import { SyntaxTypingAnimation } from "./components/ui/syntax-typing-animation";
 import { mainDemoSyntaxSegments } from "./main-demo-segments";
 import { LandingCapabilityScroll } from "./components/landing-capability-scroll";
 import { SiteFooter } from "./components/site-footer";
 import { ThemeToggle } from "./components/theme-toggle";
+import { applyBrowserChrome, browserChromeColor } from "../lib/browser-chrome";
 import { useTradeSphereTheme } from "./providers";
 
 function flaskIframeSrc(
@@ -42,6 +43,8 @@ const landingSans = DM_Sans({
 
 /** Slightly longer than native `scrollIntoView(smooth)` (~400–600ms). */
 const HEADLINE_SCROLL_DURATION_MS = 1200;
+/** Footer Home → #top; slower eased scroll than native `behavior: smooth`. */
+const HOME_SCROLL_DURATION_MS = 1400;
 
 function easeInOutCubic(t: number): number {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -49,7 +52,6 @@ function easeInOutCubic(t: number): number {
 
 const MainPage = () => {
     const { theme } = useTradeSphereTheme();
-    const [animationKey, setAnimationKey] = useState(0);
     const [showTradingPlatform, setShowTradingPlatform] = useState(false);
     const [iframeSrc, setIframeSrc] = useState("");
     const [activeView, setActiveView] = useState<PlatformView>("dashboard");
@@ -62,6 +64,10 @@ const MainPage = () => {
             w.postMessage({ type: "tradesphere-theme", theme }, "*");
         }
     }, [theme]);
+
+    const syncIframeShell = useCallback(() => {
+        pushThemeToIframe();
+    }, [pushThemeToIframe]);
 
     const navigateTo = useCallback(
         (view: PlatformView, opts?: { invite?: boolean }) => {
@@ -141,17 +147,62 @@ const MainPage = () => {
         requestAnimationFrame(tick);
     }, []);
 
+    // Footer Home link: smooth scroll to #top.
     useEffect(() => {
-        const interval = setInterval(() => {
-            setAnimationKey((prev) => prev + 1);
-        }, 16000);
-        return () => clearInterval(interval);
-    }, []);
+        if (showTradingPlatform) return;
+
+        const onClick = (e: MouseEvent) => {
+            const el = e.target;
+            if (!(el instanceof Element)) return;
+            const link = el.closest(
+                'footer[data-ts-site-footer] a[href="#top"]',
+            );
+            if (!link || link.textContent?.trim() !== "Home") return;
+            e.preventDefault();
+
+            const reduce = window.matchMedia(
+                "(prefers-reduced-motion: reduce)",
+            ).matches;
+            if (reduce) {
+                window.scrollTo(0, 0);
+                return;
+            }
+
+            const startY = window.scrollY;
+            if (startY < 2) return;
+
+            headlineScrollGen.current += 1;
+            const gen = headlineScrollGen.current;
+            const t0 = performance.now();
+
+            const tick = (now: number) => {
+                if (headlineScrollGen.current !== gen) return;
+                const elapsed = now - t0;
+                const t = Math.min(1, elapsed / HOME_SCROLL_DURATION_MS);
+                const eased = easeInOutCubic(t);
+                window.scrollTo(0, startY * (1 - eased));
+                if (t < 1) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        };
+
+        document.addEventListener("click", onClick);
+        return () => document.removeEventListener("click", onClick);
+    }, [showTradingPlatform]);
+
+    useLayoutEffect(() => {
+        applyBrowserChrome(theme, showTradingPlatform ? "platform" : "landing");
+    }, [theme, showTradingPlatform]);
+
+    useLayoutEffect(() => {
+        if (!showTradingPlatform) return;
+        syncIframeShell();
+    }, [theme, showTradingPlatform, syncIframeShell]);
 
     useEffect(() => {
         if (!showTradingPlatform) return;
-        pushThemeToIframe();
-    }, [theme, showTradingPlatform, pushThemeToIframe]);
+        window.scrollTo(0, 0);
+    }, [showTradingPlatform, iframeSrc]);
 
     // The Flask pages postMessage their identity on every load (incl. in-iframe
     // link clicks like the dashboard's "Open Studio" or the studio's back
@@ -195,34 +246,40 @@ const MainPage = () => {
                       "linear-gradient(#96ebbf, #96ebbf) padding-box, linear-gradient(90deg, #96ebbf, #96ebbf, #96ebbf, #96ebbf) border-box",
               };
 
+    const landingCanvasColor = browserChromeColor(theme, "landing");
+
+    const platformBackdropClass =
+        theme === "dark" ? "bg-[#0c0c0f]" : "bg-[#eef2f7]";
+
+    /** Main nav header — match Flask panel surface (Portfolio / Simulation blocks). */
+    const platformMainHeaderClass =
+        theme === "dark" ? "bg-[#1f1f26]" : "bg-white";
+
+    /** Header bottom stroke — neutral in light mode, grey in dark. */
+    const platformChromeBorderClass =
+        theme === "dark" ? "border-b border-[#3f3f46]" : "border-b border-[#e2e8f0]";
+
     const shellBg = showTradingPlatform
-        ? theme === "dark"
-            ? "bg-[#141417] text-zinc-100"
-            : "bg-white text-slate-900"
+        ? `${platformBackdropClass} ${theme === "dark" ? "text-zinc-100" : "text-slate-900"}`
         : "bg-transparent";
 
     return (
         <div
-            className={`min-h-screen transition-colors duration-300 ${shellBg} ${
+            className={`min-h-screen ${showTradingPlatform ? "" : "transition-colors duration-300"} ${shellBg} ${
                 showTradingPlatform ? "font-sans" : landingSans.className
             }`}
         >
-            <ThemeToggle
-                className={
-                    showTradingPlatform
-                        ? "fixed right-5 top-[1.25rem] z-50 sm:top-[1.75rem] md:top-[2rem]"
-                        : "fixed right-5 top-5 z-50"
-                }
-            />
+            {!showTradingPlatform && (
+                <ThemeToggle className="fixed right-5 top-5 z-50" />
+            )}
 
             {!showTradingPlatform ? (
                 <>
                     <section id="top" className="relative min-h-[100dvh] overflow-hidden">
                         {/* Solid page fill; upper band is covered by the rounded video. */}
                         <div
-                            className={`pointer-events-none absolute inset-0 z-0 ${
-                                theme === "dark" ? "bg-[#0c0c0f]" : "bg-white"
-                            }`}
+                            className="pointer-events-none absolute inset-0 z-0"
+                            style={{ backgroundColor: landingCanvasColor }}
                             aria-hidden
                         />
                         <div
@@ -299,10 +356,10 @@ const MainPage = () => {
                                     >
                                         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6 sm:px-8 sm:py-8">
                                             <SyntaxTypingAnimation
-                                                key={animationKey}
                                                 segments={mainDemoSyntaxSegments}
                                                 className={`ts-syntax-typing text-left font-mono text-sm md:text-base ${theme === "dark" ? "text-slate-200" : "text-zinc-800"}`}
                                                 duration={110}
+                                                loopPauseMs={16000}
                                             />
                                         </div>
                                     </div>
@@ -365,170 +422,174 @@ const MainPage = () => {
                     <SiteFooter />
                 </>
             ) : (
-                <div className="flex h-screen flex-col">
-                        <div
-                            className={`relative flex min-h-[5rem] items-center justify-end border-b pb-3 pr-20 backdrop-blur-md sm:min-h-[6rem] md:min-h-[6.75rem] ${
-                            theme === "dark"
-                                ? "border-[#96ebbf]/60 bg-[#141417]/95 text-zinc-100"
-                                : "border-[#96ebbf]/60 bg-white/95 text-slate-800"
+                <div className="ts-platform-instant-theme flex h-dvh min-h-0 flex-col bg-inherit transition-none">
+                    <header
+                        className={`shrink-0 w-full overflow-hidden ${platformMainHeaderClass} ${platformChromeBorderClass} ${
+                            theme === "dark" ? "text-zinc-100" : "text-slate-900"
                         }`}
                     >
-                        <button
-                            type="button"
-                            onClick={() => setShowTradingPlatform(false)}
-                            aria-label="Return to main page"
-                            title="Return to main page"
-                            className="group absolute left-[0.9rem] top-[1.25rem] z-20 flex cursor-pointer items-center rounded-md p-0 transition-transform duration-150 hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#96ebbf]/60 sm:left-[1.4rem] sm:top-[1.75rem] md:left-[1.9rem] md:top-[2rem]"
-                        >
-                            <img
-                                src="/media/tradesphere-logo.png?v=3"
-                                alt="TradeSphere — back to main page"
-                                className="block h-12 w-auto select-none drop-shadow-md transition-opacity duration-150 group-hover:opacity-90 sm:h-14 md:h-16"
-                                draggable={false}
-                            />
-                        </button>
-                        <nav
-                            aria-label="Site navigation"
-                            className="absolute left-1/2 top-[calc(1.25rem+1.5rem)] z-10 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-5 text-[0.95rem] font-normal tracking-tight sm:flex sm:top-[calc(1.75rem+1.75rem)] md:top-[calc(2rem+2rem)]"
-                        >
-                            <button
-                                type="button"
-                                onClick={() => navigateTo("dashboard")}
-                                aria-current={activeView === "dashboard" ? "page" : undefined}
-                                className={`cursor-pointer transition-colors duration-150 hover:text-[#96ebbf] ${
-                                    activeView === "dashboard"
-                                        ? "text-[#96ebbf]"
-                                        : theme === "dark"
-                                            ? "text-zinc-300/85"
-                                            : "text-slate-600/85"
-                                }`}
-                            >
-                                Dashboard
-                            </button>
-                            <span aria-hidden className={theme === "dark" ? "text-zinc-600" : "text-slate-300"}>
-                                ·
-                            </span>
-                            <button
-                                type="button"
-                                onClick={() => navigateTo("studio")}
-                                aria-current={activeView === "studio" ? "page" : undefined}
-                                className={`cursor-pointer transition-colors duration-150 hover:text-[#96ebbf] ${
-                                    activeView === "studio"
-                                        ? "text-[#96ebbf]"
-                                        : theme === "dark"
-                                            ? "text-zinc-300/85"
-                                            : "text-slate-600/85"
-                                }`}
-                            >
-                                Studio
-                            </button>
-                            <span aria-hidden className={theme === "dark" ? "text-zinc-600" : "text-slate-300"}>
-                                ·
-                            </span>
-                            <button
-                                type="button"
-                                onClick={() => navigateTo("live_trading")}
-                                aria-current={activeView === "live_trading" ? "page" : undefined}
-                                className={`cursor-pointer transition-colors duration-150 hover:text-[#96ebbf] ${
-                                    activeView === "live_trading"
-                                        ? "text-[#96ebbf]"
-                                        : theme === "dark"
-                                            ? "text-zinc-300/85"
-                                            : "text-slate-600/85"
-                                }`}
-                            >
-                                Live Trading
-                            </button>
-                            <span aria-hidden className={theme === "dark" ? "text-zinc-600" : "text-slate-300"}>
-                                ·
-                            </span>
+                        <div className="relative flex items-center justify-between px-3 py-3 sm:px-4 sm:py-3 md:px-5">
+                            <div className="flex items-center gap-5 sm:gap-6">
                             <button
                                 type="button"
                                 onClick={() => setShowTradingPlatform(false)}
-                                className={`cursor-pointer transition-colors duration-150 hover:text-[#96ebbf] ${
-                                    theme === "dark" ? "text-zinc-300/85" : "text-slate-600/85"
-                                }`}
+                                aria-label="Return to main page"
+                                title="Return to main page"
+                                className="group relative z-20 flex shrink-0 cursor-pointer items-center rounded-md p-0 transition-transform duration-150 hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#96ebbf]/60"
                             >
-                                About
-                            </button>
-                            <span aria-hidden className={theme === "dark" ? "text-zinc-600" : "text-slate-300"}>
-                                ·
-                            </span>
-                            <a
-                                href="mailto:michael.saleev@example.com"
-                                className={`transition-colors duration-150 hover:text-[#96ebbf] ${
-                                    theme === "dark" ? "text-zinc-300/85" : "text-slate-600/85"
-                                }`}
-                            >
-                                Contact
-                            </a>
-                        </nav>
-                    </div>
-
-                    <div
-                        className={`flex min-h-0 flex-1 basis-0 flex-col ${theme === "dark" ? "bg-[#141417]" : "bg-white"}`}
-                    >
-                        {iframeSrc ? (
-                            <div className="relative min-h-0 flex-1 basis-0">
-                                <iframe
-                                    ref={iframeRef}
-                                    src={iframeSrc}
-                                    onLoad={pushThemeToIframe}
-                                    className="absolute inset-0 h-full w-full border-0 align-top"
-                                    title="TradeSphere"
-                                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation allow-modals"
+                                <img
+                                    src="/media/tradesphere-logo.png?v=3"
+                                    alt="TradeSphere — back to main page"
+                                    className="block h-10 w-auto select-none drop-shadow-md transition-opacity duration-150 group-hover:opacity-90 sm:h-11 md:h-12"
+                                    draggable={false}
                                 />
-                            </div>
-                        ) : (
-                            <div
-                                className={`flex h-full items-center justify-center p-8 text-center ${theme === "dark" ? "text-zinc-400" : "text-slate-600"}`}
+                            </button>
+                            <nav
+                                aria-label="Site navigation"
+                                className="hidden items-center gap-5 text-[0.95rem] font-normal tracking-tight sm:flex"
                             >
-                                <div
-                                    className={`max-w-md rounded-lg border p-6 text-sm ${
-                                        theme === "dark"
-                                            ? "border-zinc-800 bg-zinc-950 text-zinc-300"
-                                            : "border-sky-400/50 bg-sky-100 text-slate-800"
-                                    }`}
-                                >
-                                    <p
-                                        className={
-                                            theme === "dark"
-                                                ? "font-medium text-zinc-100"
-                                                : "font-medium text-slate-800"
-                                        }
+                                <div className="flex items-center gap-8 sm:gap-10">
+                                    <button
+                                        type="button"
+                                        onClick={() => navigateTo("dashboard")}
+                                        aria-current={activeView === "dashboard" ? "page" : undefined}
+                                        className={`cursor-pointer hover:text-[#96ebbf] ${
+                                            activeView === "dashboard"
+                                                ? "text-[#96ebbf] underline decoration-[#96ebbf] underline-offset-[10px]"
+                                                : theme === "dark"
+                                                  ? "text-zinc-300/85"
+                                                  : "text-slate-600/85"
+                                        }`}
                                     >
-                                        Trading platform URL not configured
-                                    </p>
-                                    <p className="mt-2">
-                                        On Render, set{" "}
-                                        <code
-                                            className={`rounded px-1 py-0.5 text-xs ${
-                                                theme === "dark"
-                                                    ? "bg-zinc-900 text-cyan-200"
-                                                    : "bg-white text-slate-800"
-                                            }`}
-                                        >
-                                            NEXT_PUBLIC_FLASK_BACKEND_URL
-                                        </code>{" "}
-                                        on the <strong>Next.js</strong> service
-                                        to your <strong>Flask</strong> service URL
-                                        (build again after changing). For local
-                                        production builds, run{" "}
-                                        <code
-                                            className={`rounded px-1 py-0.5 text-xs ${
-                                                theme === "dark"
-                                                    ? "bg-zinc-900 text-cyan-200"
-                                                    : "bg-white text-slate-800"
-                                            }`}
-                                        >
-                                            ./set_next_iframe_backend_url.sh
-                                        </code>
-                                        .
-                                    </p>
+                                        Dashboard
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => navigateTo("studio")}
+                                        aria-current={activeView === "studio" ? "page" : undefined}
+                                        className={`cursor-pointer hover:text-[#96ebbf] ${
+                                            activeView === "studio"
+                                                ? "text-[#96ebbf] underline decoration-[#96ebbf] underline-offset-[10px]"
+                                                : theme === "dark"
+                                                  ? "text-zinc-300/85"
+                                                  : "text-slate-600/85"
+                                        }`}
+                                    >
+                                        Studio
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => navigateTo("live_trading")}
+                                        aria-current={activeView === "live_trading" ? "page" : undefined}
+                                        className={`cursor-pointer hover:text-[#96ebbf] ${
+                                            activeView === "live_trading"
+                                                ? "text-[#96ebbf] underline decoration-[#96ebbf] underline-offset-[10px]"
+                                                : theme === "dark"
+                                                  ? "text-zinc-300/85"
+                                                  : "text-slate-600/85"
+                                        }`}
+                                    >
+                                        Live Trading
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowTradingPlatform(false)}
+                                        className={`cursor-pointer hover:text-[#96ebbf] ${
+                                            theme === "dark" ? "text-zinc-300/85" : "text-slate-600/85"
+                                        }`}
+                                    >
+                                        About
+                                    </button>
+                                    <a
+                                        href="mailto:michael.saleev@example.com"
+                                        className={`hover:text-[#96ebbf] ${
+                                            theme === "dark" ? "text-zinc-300/85" : "text-slate-600/85"
+                                        }`}
+                                    >
+                                        Contact
+                                    </a>
                                 </div>
+                            </nav>
                             </div>
-                        )}
-                    </div>
+                            <div className="relative z-20 flex shrink-0 items-center gap-5 sm:gap-6">
+                                <input
+                                    type="search"
+                                    readOnly
+                                    tabIndex={-1}
+                                    placeholder="Search…"
+                                    aria-label="Search (coming soon)"
+                                    className={`h-9 w-52 rounded-lg border px-3 text-sm outline-none sm:h-10 sm:w-64 md:w-80 ${
+                                        theme === "dark"
+                                            ? "border-zinc-700 bg-zinc-900/80 text-zinc-400 placeholder:text-zinc-500"
+                                            : "border-[#e2e8f0] bg-white text-slate-500 placeholder:text-slate-400"
+                                    }`}
+                                />
+                                <ThemeToggle className="relative z-20 !h-9 !w-9 shrink-0 sm:!h-10 sm:!w-10" />
+                            </div>
+                        </div>
+                    </header>
+
+                    {iframeSrc ? (
+                        <div
+                            className={`relative min-h-0 flex-1 basis-0 ${platformBackdropClass}`}
+                        >
+                            <iframe
+                                ref={iframeRef}
+                                src={iframeSrc}
+                                onLoad={syncIframeShell}
+                                className="absolute inset-0 h-full w-full border-0 align-top"
+                                title="TradeSphere"
+                                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation allow-modals"
+                            />
+                        </div>
+                    ) : (
+                        <div
+                            className={`flex min-h-0 flex-1 basis-0 items-center justify-center p-8 text-center ${theme === "dark" ? "text-zinc-400" : "text-slate-600"}`}
+                        >
+                            <div
+                                className={`max-w-md rounded-lg border p-6 text-sm ${
+                                    theme === "dark"
+                                        ? "border-zinc-800 bg-zinc-950 text-zinc-300"
+                                        : "border-sky-400/50 bg-sky-100 text-slate-800"
+                                }`}
+                            >
+                                <p
+                                    className={
+                                        theme === "dark"
+                                            ? "font-medium text-zinc-100"
+                                            : "font-medium text-slate-800"
+                                    }
+                                >
+                                    Trading platform URL not configured
+                                </p>
+                                <p className="mt-2">
+                                    On Render, set{" "}
+                                    <code
+                                        className={`rounded px-1 py-0.5 text-xs ${
+                                            theme === "dark"
+                                                ? "bg-zinc-900 text-cyan-200"
+                                                : "bg-white text-slate-800"
+                                        }`}
+                                    >
+                                        NEXT_PUBLIC_FLASK_BACKEND_URL
+                                    </code>{" "}
+                                    on the <strong>Next.js</strong> service to your{" "}
+                                    <strong>Flask</strong> service URL (build again after changing). For local
+                                    production builds, run{" "}
+                                    <code
+                                        className={`rounded px-1 py-0.5 text-xs ${
+                                            theme === "dark"
+                                                ? "bg-zinc-900 text-cyan-200"
+                                                : "bg-white text-slate-800"
+                                        }`}
+                                    >
+                                        ./set_next_iframe_backend_url.sh
+                                    </code>
+                                    .
+                                </p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

@@ -1,10 +1,14 @@
 import matplotlib
-matplotlib.use('Agg')  # Headless backend; MUST be set before any import that loads pyplot (e.g. Portfolio).
-import matplotlib.pyplot as plt
+matplotlib.use('Agg')  # Headless backend; MUST be set before Portfolio imports pyplot.
 
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from Portfolio import Portfolio
 from StockData import StockData
+from market_hours import (
+    equity_live_rth_execution_allowed,
+    equity_sim_trade_execution_allowed,
+    next_session_time,
+)
 from datetime import datetime, timedelta, date
 import json
 import time
@@ -13,8 +17,6 @@ import uuid
 import os
 import requests
 from dotenv import load_dotenv
-import base64
-import io
 import ast
 
 import yfinance as yf
@@ -29,6 +31,29 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = Flask(__name__)
+
+# Bump STATIC_ASSET_VERSION on deploy so browsers cache CSS/JS; avoid per-request random ?v=.
+STATIC_ASSET_VERSION = os.environ.get('STATIC_ASSET_VERSION', '1')
+MAX_ACTIVE_SIMULATIONS = 12
+
+
+@app.context_processor
+def _inject_template_globals():
+    return {'static_asset_version': STATIC_ASSET_VERSION}
+
+
+def _prune_active_simulations(keep_id=None):
+    """Drop oldest completed runs so the in-memory map does not grow without bound."""
+    if len(active_simulations) <= MAX_ACTIVE_SIMULATIONS:
+        return
+    completed = [
+        sid for sid, sim in active_simulations.items()
+        if sid != keep_id and getattr(sim, 'is_complete', False)
+    ]
+    for sid in completed:
+        del active_simulations[sid]
+        if len(active_simulations) <= MAX_ACTIVE_SIMULATIONS:
+            break
 
 
 @app.route("/teeby-avatar.png")
@@ -70,10 +95,10 @@ current_portfolio_state = {
 cerebras_token = os.getenv('CEREBRAS_TOKEN') or 'csk-42x2pme9cv39vddm69tpmec5exyv4r6ch5c8n8rdfdrcrmnh'
 cerebras_api_url = "https://api.cerebras.ai/v1/chat/completions"
 
-def update_portfolio_state(simulation_id, simulation_data):
-    """Update the global portfolio state with the latest simulation results"""
+def update_portfolio_state(simulation_id):
+    """Update the global portfolio state with the latest simulation results."""
     global current_portfolio_state
-    
+
     if simulation_id in active_simulations:
         simulation = active_simulations[simulation_id]
         
@@ -101,10 +126,8 @@ def update_portfolio_state(simulation_id, simulation_data):
             current_portfolio_state['final_metrics'].get('total_return_pct'),
         )
         
-        # Clear conversation history when new simulation starts
-        if 'ai_advisor' in globals():
-            ai_advisor.clear_conversation_history()
-            logger.debug("Conversation history cleared for new simulation")
+        advisor.clear_conversation_history()
+        logger.debug("Conversation history cleared for new simulation")
 
 class AIAdvisor:
     def __init__(self):
@@ -559,11 +582,9 @@ class SimulationManager:
         self.trading_frequency = trading_frequency  # 'daily' or 'intraday'
         self.tickers = tickers
         self.trading_rules = trading_rules
-        self.beta_hedge_enabled = beta_hedge_enabled
-        # Imported strategy lane: when strategy_mode == 'imported', the
-        # per-tick loop runs `strategy_code` through the same sandbox the
-        # Studio uses (operating on `port` and the historical price at
-        # `currtime`) in place of the manual trading_rules block.
+        self.beta_hedge_enabled = beta_hedge_enabled  # honored only when strategy_mode == 'manual'
+        # Imported coding strategies: rewritten into a generator; one loop
+        # iteration ⇒ one simulated bar (`next(gen)` inside run_simulation).
         self.strategy_mode = strategy_mode if strategy_mode in ('manual', 'imported') else 'manual'
         self.strategy_code = strategy_code if self.strategy_mode == 'imported' else None
         self.strategy_name = strategy_name if self.strategy_mode == 'imported' else None
@@ -573,12 +594,25 @@ class SimulationManager:
         self.is_complete = False
         self.thread = None
         self.total_result_steps = 1
+        # Imported generator state (reset at each run_simulation).
+        self._imported_strategy_gen = None
+        self._imported_strategy_globals = None
+        self._imported_strategy_exhausted = False
+        self._sim_import_rt = None
         
     def run_simulation(self):
         """Run the portfolio simulation"""
         try:
             self.is_running = True
+            self._imported_strategy_gen = None
+            self._imported_strategy_globals = None
+            self._imported_strategy_exhausted = False
+            self._sim_import_rt = None
             logger.info("Simulation %s start (rules groups=%s)", self.simulation_id, len(self.trading_rules))
+
+            # Beta hedge is only defined for manual trading rules. Imported coding
+            # strategies control exposure entirely inside user code — ignore checkbox/API.
+            beta_hedge_applies = bool(self.beta_hedge_enabled and self.strategy_mode == 'manual')
             
             freq = self.trading_frequency
             bar_minutes_map = {'1m': 1, '5m': 5, '15m': 15, '60m': 60, 'intraday': 60}
@@ -592,13 +626,22 @@ class SimulationManager:
             # Initialize portfolio and stock data
             currtime = datetime.strptime(self.start_date, '%Y-%m-%d')
             
-            # If start date is a weekend, move to next weekday
-            while currtime.weekday() >= 5:  # Saturday=5, Sunday=6
-                currtime += timedelta(days=1)
-                logger.debug("Start date was weekend, moving to %s", currtime.strftime('%Y-%m-%d'))
-            
             if is_intraday:
                 currtime = currtime.replace(hour=9, minute=30, second=0, microsecond=0)
+
+            # Roll a weekend / NYSE-holiday start date forward to the next real
+            # trading bar. (Yahoo's bar index later overrides this for the
+            # common case, but if the requested tickers return no data we'd
+            # otherwise sit on Memorial Day forever.)
+            if not equity_sim_trade_execution_allowed(currtime, yf_interval):
+                nxt = next_session_time(currtime, yf_interval)
+                nxt_py = nxt.to_pydatetime() if hasattr(nxt, 'to_pydatetime') else nxt
+                if isinstance(nxt_py, datetime) and nxt_py > currtime:
+                    logger.debug(
+                        'Start date %s is non-session; advancing to %s',
+                        currtime.strftime('%Y-%m-%d %H:%M'), nxt_py.strftime('%Y-%m-%d %H:%M'),
+                    )
+                    currtime = nxt_py.replace(tzinfo=None)
             
             start_date_str = currtime.strftime('%Y-%m-%d')
             today_d = date.today()
@@ -653,7 +696,7 @@ class SimulationManager:
                 )
 
             rule_and_hedge = set(self.trading_rules.keys())
-            if self.beta_hedge_enabled:
+            if beta_hedge_applies:
                 rule_and_hedge.add('VOO')
             for t in rule_and_hedge:
                 if t not in data:
@@ -661,10 +704,31 @@ class SimulationManager:
                         t, start_date_str, end_date_str, yf_interval, allow_daily_fallback=(yf_interval == '1d')
                     )
 
-            # ── Imported-strategy lane: compile once, AST-scan for tickers
-            # the script references, and pre-load StockData for any symbol
-            # not already in the loaded set so `price("AAPL")` etc. resolve
-            # inside the sandbox at every step.
+            # Imported-strategy compile runs below once total_intervals is final.
+
+            # If Yahoo only has daily rows (midnight index) but we step by minutes, every minute maps to the
+            # same bar — flat prices at 00:00, 00:01, ...  Detect and step by calendar day instead.
+            data_is_daily = False
+            for ticker in list(data.keys()):
+                idx = data[ticker].stock_data.index
+                if len(idx) < 2:
+                    if is_intraday and len(idx) == 1:
+                        data_is_daily = True
+                    continue
+                gap0 = idx[1] - idx[0]
+                if gap0 >= timedelta(hours=12):
+                    data_is_daily = True
+                    break
+            report_intraday_times = bool(is_intraday and not data_is_daily)
+            if is_intraday and data_is_daily:
+                logger.warning(
+                    'Intraday mode requested but bar spacing is daily; stepping by calendar day. '
+                    'Use a recent start date within Yahoo intraday window for per-minute prices.'
+                )
+                interval_delta = timedelta(days=1)
+                total_intervals = max(1, int(self.duration_days))
+                self.total_result_steps = total_intervals + 1
+
             strategy_compiled = None
             strategy_tickers = set()
             if self.strategy_mode == 'imported' and self.strategy_code:
@@ -673,6 +737,8 @@ class SimulationManager:
                     _strategy_validate_ast(s_tree)
                     strategy_tickers = _scan_strategy_tickers(s_tree)
                     s_tree = _StrategyTickInjector().visit(s_tree)
+                    s_tree = _LoopYieldInjector().visit(s_tree)
+                    s_tree = _wrap_strategy_ast_as_generator_function(s_tree)
                     ast.fix_missing_locations(s_tree)
                     strategy_compiled = compile(s_tree, f'<sim:{self.simulation_id}>', 'exec')
                 except SyntaxError as e:
@@ -727,28 +793,12 @@ class SimulationManager:
                             t, start_date_str, end_date_str, yf_interval, allow_daily_fallback=(yf_interval == '1d')
                         )
 
-            # If Yahoo only has daily rows (midnight index) but we step by minutes, every minute maps to the
-            # same bar — flat prices at 00:00, 00:01, ...  Detect and step by calendar day instead.
-            data_is_daily = False
-            for ticker in list(data.keys()):
-                idx = data[ticker].stock_data.index
-                if len(idx) < 2:
-                    if is_intraday and len(idx) == 1:
-                        data_is_daily = True
-                    continue
-                gap0 = idx[1] - idx[0]
-                if gap0 >= timedelta(hours=12):
-                    data_is_daily = True
-                    break
-            report_intraday_times = bool(is_intraday and not data_is_daily)
-            if is_intraday and data_is_daily:
-                logger.warning(
-                    'Intraday mode requested but bar spacing is daily; stepping by calendar day. '
-                    'Use a recent start date within Yahoo intraday window for per-minute prices.'
-                )
-                interval_delta = timedelta(days=1)
-                total_intervals = max(1, int(self.duration_days))
-                self.total_result_steps = total_intervals + 1
+            # Share StockData instances with Portfolio.buy/sell/get_value so every
+            # interval sees the same curtime-advanced bars as `data` in the loop.
+            # Without this, Portfolio rebuilds separate Yahoo caches that never get
+            # curtime updates — trades stall after the first bar or pile onto one day.
+            for _sym, _sd in data.items():
+                port._stock_cache[_sym] = _sd
             
             # Initial stock positions (already held) — do not debit cash.
             # Cash remains the full "Initial Cash Deposit"; PnL baseline is set
@@ -810,6 +860,36 @@ class SimulationManager:
                     
                 # Move to next interval
                 currtime = currtime + interval_delta
+
+                # Market-hours gate (XNYS sessions; see market_hours.py).
+                # When the bar lands outside the NYSE regular session
+                # (weekend / holiday / before 9:30 / after 16:00 ET), we
+                # still want the *animation* to show that time passed —
+                # but we don't run strategy logic and we don't try to
+                # mark a fresh PnL point.
+                #
+                # Daily bars: every closed day is its own row ("Sat —
+                # Market Closed"). Intraday: collapse the entire closed
+                # gap into a single row so a 17-hour overnight at 1m
+                # doesn't produce 1,000+ dead frames; we fast-forward
+                # `currtime` to the next session-open before the next
+                # iteration.
+                bar_open = equity_sim_trade_execution_allowed(currtime, yf_interval)
+                closed_gap_summary = None
+                if not bar_open and is_intraday and not data_is_daily:
+                    gap_start = currtime
+                    nxt = next_session_time(currtime, yf_interval)
+                    try:
+                        nxt_py = nxt.to_pydatetime() if hasattr(nxt, 'to_pydatetime') else nxt
+                    except Exception:
+                        nxt_py = currtime
+                    if isinstance(nxt_py, datetime) and nxt_py > currtime:
+                        closed_gap_summary = (gap_start, nxt_py.replace(tzinfo=None))
+                        # Park `currtime` at the gap's *closing* edge so the
+                        # row's timestamp shows the end of the closed
+                        # period; the next iteration will step into the
+                        # first real session minute.
+                        currtime = closed_gap_summary[1] - interval_delta
                 
                 # Update current time for all loaded symbols (portfolio, rules, hedge)
                 for ticker in data.keys():
@@ -822,7 +902,7 @@ class SimulationManager:
                     if price is not None:
                         current_prices[ticker] = price
                 
-                if self.beta_hedge_enabled and 'VOO' not in current_prices:
+                if beta_hedge_applies and 'VOO' not in current_prices:
                     if 'VOO' in data and not data['VOO'].stock_data.empty:
                         vp = data['VOO'].get_price()
                         if vp is not None:
@@ -851,19 +931,28 @@ class SimulationManager:
                                 if p is not None:
                                     current_prices[ticker] = float(p)
 
-                # Per-interval decision logic.
+                # Per-interval decision logic (one bar/step in simulated time).
                 #   • Manual mode → evaluate the trading_rules block.
-                #   • Imported mode → run the sandboxed script body; it
-                #     replaces manual rules entirely (the dashboard's
-                #     trading_rules array is sent empty when Imported
-                #     mode is active so there's nothing to merge anyway).
+                #   • Imported mode → run the sandboxed script body once for
+                #     this step (respects Trading Frequency — not wall-clock).
+                #     Live Trading re-runs similar code ~every second instead.
+                #
+                # Closed bars never execute strategy logic: Portfolio.buy/sell
+                # already silently refuse them, but the surrounding code used
+                # to push "Bought X" strings into `trades_executed` regardless,
+                # producing phantom trade rows on Sat/Sun. Skipping the whole
+                # block here is the single fix for both modes.
                 trades_executed = []
                 rules_to_remove = []  # Manual one-time rules to delete after this interval.
 
-                if self.strategy_mode == 'imported' and strategy_compiled is not None:
+                if not bar_open:
+                    pass  # closed bar — animation row only, no trade evaluation
+                elif self.strategy_mode == 'imported' and strategy_compiled is not None:
                     self._execute_imported_strategy(
                         strategy_compiled, port, currtime,
                         current_prices, trades_executed,
+                        interval_index=i,
+                        total_intervals=total_intervals,
                     )
                 else:
                     for ticker, rules in self.trading_rules.items():
@@ -920,8 +1009,10 @@ class SimulationManager:
                             if not self.trading_rules[ticker]:
                                 del self.trading_rules[ticker]
                 
-                # Beta hedging: every interval, rebalance VOO hedge toward target (delta trades)
-                if self.beta_hedge_enabled:
+                # Beta hedging: manual rules only — rebalance VOO hedge toward target.
+                # Closed bars skip hedge rebalances too (no fills should happen
+                # outside the regular NYSE session).
+                if beta_hedge_applies and bar_open:
                     hedge_trades = self._execute_beta_hedge(port, currtime, current_prices, data)
                     trades_executed.extend(hedge_trades)
                 
@@ -937,23 +1028,63 @@ class SimulationManager:
                     day_num = (i // bpd) + 1
                     time_str = currtime.strftime('%H:%M')
                     interval_label = f"Day {day_num}, {time_str}"
-                
+
+                # For closed intraday gaps, surface the full "FROM → TO"
+                # range so the animation card reads "Market closed
+                # 16:00 May 13 → 09:30 May 14" instead of pretending a
+                # single 5-minute bar covered the overnight period.
+                closed_label = None
+                if closed_gap_summary is not None:
+                    g0, g1 = closed_gap_summary
+                    closed_label = (
+                        f"Market closed {g0.strftime('%a %H:%M')} → "
+                        f"{g1.strftime('%a %H:%M')}"
+                    )
+                elif not bar_open and not is_intraday:
+                    closed_label = f"Market closed ({currtime.strftime('%A')})"
+
                 daily_result = {
                     'day': i + 1,
                     'interval_label': interval_label,
                     'date': currtime.strftime('%Y-%m-%d %H:%M') if report_intraday_times else currtime.strftime('%Y-%m-%d'),
-                    'prices': current_prices.copy(),
+                    'prices': current_prices.copy() if bar_open else {},
                     'portfolio_value': current_value,
                     'trades': trades_executed.copy(),
                     'positions': port.positions.copy(),
                     'cash': round(float(port.cash), 2),
                     'pnl': interval_pnl,
                     'one_time_rules_executed': len(rules_to_remove),  # Track how many one-time rules were executed
-                    'hedge_margin_balance': port.get_hedge_margin_balance()  # Track available hedge margin
+                    'hedge_margin_balance': port.get_hedge_margin_balance(),  # Track available hedge margin
+                    # XNYS session state for this bar — drives the frontend
+                    # animation ("Market Closed" card) and chart gapping.
+                    'market_open': bool(bar_open),
+                    'market_status_label': closed_label,
                 }
                 
                 self.results.append(daily_result)
-            
+
+            # Flatten all beta-hedge positions at the last bar so final P&L is
+            # cash + long equity only (no open shorts or margin loans).
+            if beta_hedge_applies and self.results:
+                last_prices = dict(self.results[-1].get('prices') or {})
+                if 'VOO' not in last_prices and 'VOO' in data:
+                    data['VOO'].curtime = currtime
+                    voo_px = data['VOO'].get_price()
+                    if voo_px is not None:
+                        last_prices['VOO'] = float(voo_px)
+                unwind_msgs = port.close_all_hedge_positions(currtime, last_prices)
+                if unwind_msgs:
+                    self.results[-1].setdefault('trades', [])
+                    self.results[-1]['trades'].extend(
+                        f"End-of-run unwind: {m}" for m in unwind_msgs
+                    )
+                final_nav = port.get_value(currtime)
+                self.results[-1]['portfolio_value'] = final_nav
+                self.results[-1]['pnl'] = round(float(final_nav) - float(port.original_value), 2)
+                self.results[-1]['cash'] = round(float(port.cash), 2)
+                self.results[-1]['positions'] = port.positions.copy()
+                self.results[-1]['hedge_margin_balance'] = port.get_hedge_margin_balance()
+
             # Calculate final metrics
             if self.results:
                 # Use the actual initial portfolio value after initial purchases
@@ -981,7 +1112,7 @@ class SimulationManager:
                     hedge_margin_remaining = 0
                 
                 # Calculate hedge impact analysis
-                hedge_analysis = self._calculate_hedge_impact(port) if self.beta_hedge_enabled else None
+                hedge_analysis = self._calculate_hedge_impact(port) if beta_hedge_applies else None
                 
                 # Opening NAV (cash deposit + market value of pre-existing
                 # stock positions at t=0). This is the baseline for P&L and
@@ -1010,14 +1141,7 @@ class SimulationManager:
             self.is_running = False
             
             # Update global portfolio state for AI
-            update_portfolio_state(self.simulation_id, {
-                'initial_cash': self.initial_cash,
-                'opening_value': float(getattr(self, 'opening_value', self.initial_cash)),
-                'start_date': self.start_date,
-                'duration_days': self.duration_days,
-                'tickers': self.tickers,
-                'trading_rules': self.trading_rules
-            })
+            update_portfolio_state(self.simulation_id)
             
             logger.info("Simulation %s completed", self.simulation_id)
             
@@ -1053,46 +1177,65 @@ class SimulationManager:
             self.is_complete = True
             self.is_running = False
     
-    def _execute_imported_strategy(self, compiled_strategy, port, currtime, current_prices, trades_executed):
-        """Run the imported (compiled) strategy body once for this interval.
+    def _execute_imported_strategy(
+        self,
+        compiled_strategy,
+        port,
+        currtime,
+        current_prices,
+        trades_executed,
+        *,
+        interval_index=0,
+        total_intervals=1,
+    ):
+        """Advance the dashboard imported strategy by one simulated trading bar.
 
-        The sandbox exposes the same surface the Studio uses (`price`, `buy`,
-        `sell`, `position`, `cash`, `log`, `print`), but every helper now
-        operates on the historical simulation state:
-          • `price("X")` reads the price at `currtime` from `current_prices`
-            (populated upstream from each ticker's StockData series).
-          • `buy`/`sell` mutate the live `Portfolio` exactly the same way
-            manual rules do — same cost / position checks, same Portfolio
-            methods — so PnL, Sharpe, beta, hedge analysis, etc. all flow
-            through unchanged downstream.
+        The script is rewritten into ``def __strategy_run__(): ...`` with a
+        ``yield`` injected at the end of every ``for`` / ``while`` iteration.
+        This method calls ``next(generator)`` once, so **one loop iteration ⇒
+        one simulated bar advance** while the venue is open. Top-level statements
+        (no loops) run until the generator ends on the **first** bar.
 
-        Safety budget is reset every interval (each tick gets its own
-        50,000-op / 5-second envelope) so a user `while True:` loop can't
-        wedge the whole simulation; the runaway just gets aborted and the
-        next interval continues. Errors are swallowed (logged at DEBUG) —
-        we don't want one bad tick to kill a 365-day backtest. Successful
-        trades are appended to `trades_executed`, which the surrounding
-        loop already feeds into the per-interval result and downstream
-        analytics.
+        Sandbox helpers (`price`, `buy`, …) resolve state from
+        `_SimStrategyRuntime` refreshed on every call above.
         """
-        tick_budget = {'ticks': 0, 'start': time.time()}
+        del interval_index, total_intervals  # kept for callers; semantics unused
+
+        if self._imported_strategy_exhausted:
+            return
+
+        rt = self._sim_import_rt
+        if rt is None:
+            rt = _SimStrategyRuntime()
+            self._sim_import_rt = rt
+
+        rt.port = port
+        rt.curtime = currtime
+        rt.prices = current_prices or {}
+        rt.trades = trades_executed
+
+        mgr = self
+        rt.tick_budget = {'ticks': 0, 'start': time.time()}
         MAX_OPS = 50_000
         MAX_SECONDS = 5.0
 
         def _tick():
-            tick_budget['ticks'] += 1
-            if tick_budget['ticks'] > MAX_OPS:
-                raise RuntimeError(f'Imported tick exceeded {MAX_OPS:,} operations.')
-            if time.time() - tick_budget['start'] > MAX_SECONDS:
-                raise TimeoutError(f'Imported tick exceeded {MAX_SECONDS:.0f}s.')
+            tb = mgr._sim_import_rt.tick_budget
+            tb['ticks'] += 1
+            if tb['ticks'] > MAX_OPS:
+                raise RuntimeError(f'Imported strategy exceeded {MAX_OPS:,} operations.')
+            if time.time() - tb['start'] > MAX_SECONDS:
+                raise TimeoutError(f'Imported strategy exceeded {MAX_SECONDS:.0f}s.')
 
         def _price(ticker):
             _tick()
+            r = mgr._sim_import_rt
             sym = str(ticker).upper().strip()
-            return float(current_prices.get(sym, 0.0))
+            return float((r.prices or {}).get(sym, 0.0))
 
         def _buy(ticker, shares):
             _tick()
+            r = mgr._sim_import_rt
             sym = str(ticker).upper().strip()
             try:
                 qty = int(shares)
@@ -1100,26 +1243,23 @@ class SimulationManager:
                 return False
             if qty <= 0:
                 return False
-            px = current_prices.get(sym)
+            px = (r.prices or {}).get(sym)
             if not px or px <= 0:
                 return False
             cost = float(px) * qty
-            if port.cash < cost:
+            if r.port.cash < cost:
                 return False
             try:
-                # `price + 1` mirrors the manual-rules path: it acts as a
-                # max-price ceiling so Portfolio.buy doesn't refuse on a
-                # minor mismatch between snapshot price and its own
-                # get_price() reading.
-                port.buy(sym, float(px) + 1, qty, currtime)
+                r.port.buy(sym, float(px) + 1, qty, r.curtime)
             except Exception as e:
                 logger.debug('Imported buy failed (%s, %s): %s', sym, qty, e)
                 return False
-            trades_executed.append(f"Bought {qty} {sym} @ ${float(px):.2f}")
+            r.trades.append(f"Bought {qty} {sym} @ ${float(px):.2f}")
             return True
 
         def _sell(ticker, shares):
             _tick()
+            r = mgr._sim_import_rt
             sym = str(ticker).upper().strip()
             try:
                 qty = int(shares)
@@ -1127,29 +1267,27 @@ class SimulationManager:
                 return False
             if qty <= 0:
                 return False
-            if port.positions.get(sym, 0) < qty:
+            if r.port.positions.get(sym, 0) < qty:
                 return False
-            px = current_prices.get(sym, 0)
+            px = (r.prices or {}).get(sym, 0)
             try:
-                # 0 = market sell at the Portfolio's own snapshot price.
-                port.sell(sym, 0, qty, currtime)
+                r.port.sell(sym, 0, qty, r.curtime)
             except Exception as e:
                 logger.debug('Imported sell failed (%s, %s): %s', sym, qty, e)
                 return False
-            trades_executed.append(f"Sold {qty} {sym} @ ${float(px):.2f}")
+            r.trades.append(f"Sold {qty} {sym} @ ${float(px):.2f}")
             return True
 
         def _position(ticker):
             _tick()
-            return int(port.positions.get(str(ticker).upper().strip(), 0))
+            r = mgr._sim_import_rt
+            return int(r.port.positions.get(str(ticker).upper().strip(), 0))
 
         def _cash():
             _tick()
-            return float(port.cash)
+            return float(mgr._sim_import_rt.port.cash)
 
         def _log(*_args):
-            # Per-interval stdout from the user script is intentionally a
-            # no-op for now — the dashboard surfaces trades, not log lines.
             _tick()
 
         safe_builtins = {
@@ -1158,20 +1296,47 @@ class SimulationManager:
             'int': int, 'float': float, 'str': str, 'bool': bool,
             'True': True, 'False': False, 'None': None,
         }
-        sandbox_globals = {
-            '__builtins__': safe_builtins,
-            '_tick': _tick,
-            'price': _price, 'buy': _buy, 'sell': _sell,
-            'position': _position, 'cash': _cash,
-            'log': _log, 'print': _log,
-        }
+
+        if self._imported_strategy_globals is None:
+            g = {
+                '__builtins__': safe_builtins,
+                '_tick': _tick,
+                'price': _price, 'buy': _buy, 'sell': _sell,
+                'position': _position, 'cash': _cash,
+                'log': _log, 'print': _log,
+            }
+            self._imported_strategy_globals = g
+            try:
+                exec(compiled_strategy, g, g)
+            except (TimeoutError, RuntimeError, ValueError) as e:
+                logger.debug('Imported compile/exec init @ %s: %s', currtime, e)
+                self._imported_strategy_exhausted = True
+                return
+            except Exception as e:  # pragma: no cover
+                logger.debug('Imported strategy init unexpected: %s', e)
+                self._imported_strategy_exhausted = True
+                return
+
+            strat = g.get('__strategy_run__')
+            if not callable(strat):
+                logger.debug('Imported strategy has no callable __strategy_run__')
+                self._imported_strategy_exhausted = True
+                return
+            try:
+                self._imported_strategy_gen = strat()
+            except Exception as e:
+                logger.debug('Imported strategy generator start: %s', e)
+                self._imported_strategy_exhausted = True
+                return
 
         try:
-            exec(compiled_strategy, sandbox_globals, sandbox_globals)
+            next(self._imported_strategy_gen)
+        except StopIteration:
+            self._imported_strategy_exhausted = True
         except (TimeoutError, RuntimeError, ValueError) as e:
-            logger.debug('Imported tick @ %s: %s', currtime, e)
-        except Exception as e:  # pragma: no cover — anything unexpected
-            logger.debug('Imported tick @ %s unexpected: %s', currtime, e)
+            logger.debug('Imported generator step @ %s: %s', currtime, e)
+        except Exception as e:  # pragma: no cover
+            logger.debug('Imported generator unexpected @ %s: %s', currtime, e)
 
     def _get_voo_price(self, currtime):
         """Get VOO price with robust error handling and fallback logic"""
@@ -1657,6 +1822,9 @@ def start_simulation():
                 'error': 'Imported strategy mode requires a non-empty strategy_code.'
             }), 400
 
+        if strategy_mode == 'imported':
+            beta_hedge_enabled = False
+
         simulation = SimulationManager(
             simulation_id, initial_cash, start_date, duration_days,
             trading_frequency, tickers, trading_rules, beta_hedge_enabled,
@@ -1669,9 +1837,9 @@ def start_simulation():
         simulation.thread.daemon = True
         simulation.thread.start()
         
-        # Store simulation
         active_simulations[simulation_id] = simulation
-        
+        _prune_active_simulations(keep_id=simulation_id)
+
         return jsonify({
             'success': True,
             'simulation_id': simulation_id,
@@ -1689,17 +1857,20 @@ def simulation_status(simulation_id):
     """Get current status of a simulation"""
     if simulation_id not in active_simulations:
         return jsonify({'error': 'Simulation not found'}), 404
-    
+
     simulation = active_simulations[simulation_id]
-    
+    all_results = simulation.results or []
+    since = max(0, request.args.get('since', default=0, type=int))
+
     total_steps = getattr(simulation, 'total_result_steps', None) or (simulation.duration_days + 1)
     if total_steps <= 0:
         total_steps = 1
     response = {
         'is_running': simulation.is_running,
         'is_complete': simulation.is_complete,
-        'results': simulation.results,
-        'progress': min(1.0, len(simulation.results) / total_steps),
+        'results': all_results[since:],
+        'results_total': len(all_results),
+        'progress': min(1.0, len(all_results) / total_steps),
     }
     
     # Always include final_metrics if simulation is complete
@@ -1745,15 +1916,6 @@ def stop_simulation(simulation_id):
     
     return jsonify({'success': True, 'message': 'Simulation stopped'})
 
-@app.route('/cleanup_simulation/<simulation_id>', methods=['DELETE'])
-def cleanup_simulation(simulation_id):
-    """Clean up a completed simulation"""
-    if simulation_id in active_simulations:
-        del active_simulations[simulation_id]
-        return jsonify({'success': True, 'message': 'Simulation cleaned up'})
-    
-    return jsonify({'error': 'Simulation not found'}), 404
-
 @app.route('/ai_analysis', methods=['POST'])
 def ai_analysis():
     """Get AI analysis of portfolio data with dynamic portfolio memory"""
@@ -1762,51 +1924,16 @@ def ai_analysis():
         simulation_id = data.get('simulation_id')
         user_question = data.get('question', '')
         
-        # If no simulation_id provided, use global portfolio state
         if not simulation_id:
-            if current_portfolio_state['has_simulation']:
-                # Use current portfolio state
-                analysis = advisor.analyze_portfolio(None, user_question, None)
-                return jsonify({
-                    'success': True,
-                    'analysis': analysis,
-                    'timestamp': datetime.now().isoformat(),
-                    'source': 'current_portfolio_state'
-                })
-            else:
-                # No portfolio data available
-                analysis = advisor.analyze_portfolio(None, user_question, None)
-                return jsonify({
-                    'success': True,
-                    'analysis': analysis,
-                    'timestamp': datetime.now().isoformat(),
-                    'source': 'no_portfolio_data'
-                })
-        
-        # Handle specific simulation ID
-        if simulation_id == 'test-simulation-123':
-            # Use sample data for testing
-            portfolio_data = {
-                'final_metrics': {
-                    'total_return_pct': 15.5,
-                    'final_value': 115500.0,
-                    'total_pnl': 15500.0,
-                    'sharpe_ratio': 1.2,
-                    'volatility_pct': 12.3,
-                    'total_trades': 45,
-                    'final_positions': {'AAPL': 100, 'MSFT': 50, 'GOOGL': 25}
-                },
-                'results': []
-            }
-            simulation_data = {
-                'initial_cash': 100000,
-                'start_date': '2023-01-03',
-                'duration_days': 30,
-                'trading_frequency': 'daily',
-                'tickers': {'AAPL': 50, 'MSFT': 25, 'GOOGL': 10},
-                'trading_rules': {'buy_threshold': 0.02, 'sell_threshold': 0.02}
-            }
-        elif simulation_id in active_simulations:
+            analysis = advisor.analyze_portfolio(None, user_question, None)
+            return jsonify({
+                'success': True,
+                'analysis': analysis,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'current_portfolio_state' if current_portfolio_state['has_simulation'] else 'no_portfolio_data',
+            })
+
+        if simulation_id in active_simulations:
             simulation = active_simulations[simulation_id]
             
             # Prepare portfolio data for analysis
@@ -1863,103 +1990,6 @@ def clear_chat():
             'error': str(e)
         }), 500
 
-@app.route('/plot/<simulation_id>/<plot_type>')
-def get_plot(simulation_id, plot_type):
-    """Generate and return portfolio plots as base64 encoded images"""
-    try:
-        if simulation_id not in active_simulations:
-            return jsonify({'error': 'Simulation not found'}), 404
-        
-        simulation = active_simulations[simulation_id]
-        
-        if not simulation.is_complete:
-            return jsonify({'error': 'Simulation not complete'}), 400
-        
-        # Create a portfolio object and populate it with the actual simulation data
-        currtime = datetime.strptime(simulation.start_date, '%Y-%m-%d')
-        today_d = date.today()
-        today_dt = datetime(today_d.year, today_d.month, today_d.day)
-        dh = getattr(simulation, 'duration_hours', None)
-        tf = simulation.trading_frequency
-        if dh is not None and tf in ('1m', '5m', '15m'):
-            pad = max(30, min(120, int(dh) * 5 + 30))
-        elif tf in ('1m', '5m', '15m', '60m', 'intraday'):
-            pad = max(30, simulation.duration_days * 15 + 30)
-        else:
-            pad = simulation.duration_days + 30
-        end_date_str = max(currtime + timedelta(days=pad), today_dt).strftime('%Y-%m-%d')
-        
-        port = Portfolio(simulation.initial_cash, simulation.start_date, end_date_str)
-
-        # Populate the portfolio's change_over_time with actual simulation results
-        for result in simulation.results:
-            result_time = datetime.strptime(result['date'], '%Y-%m-%d %H:%M' if ':' in result['date'] else '%Y-%m-%d')
-            portfolio_value = result['portfolio_value']
-
-            # Store the actual portfolio value at this timestamp
-            port.change_over_time[result_time] = portfolio_value
-
-        # Align the plot baseline with opening NAV (cash + initial positions)
-        # so the percentage and P&L curves count from the true starting value
-        # the user configured, not just the cash deposit.
-        opening_value = getattr(simulation, 'opening_value', None)
-        if opening_value is None and simulation.results:
-            opening_value = float(simulation.results[0]['portfolio_value'])
-        if opening_value is not None:
-            port.original_value = float(opening_value)
-        
-        # Generate the requested plot
-        plt.clf()  # Clear any existing plots
-        
-        if plot_type == 'value':
-            # Portfolio value over time
-            port.plot_portfolio_value(title="Portfolio Value Over Time", show_percentage=False, save_path=None, show_plot=False)
-        elif plot_type == 'percentage':
-            # Portfolio value as percentage change
-            port.plot_portfolio_value(title="Portfolio Performance (%)", show_percentage=True, save_path=None, show_plot=False)
-        elif plot_type == 'pnl':
-            # Profit/Loss over time
-            port.plot_pnl(title="Portfolio P&L Over Time", save_path=None, show_plot=False)
-        else:
-            return jsonify({'error': 'Invalid plot type'}), 400
-        
-        # Convert plot to base64 string
-        img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
-        img_buffer.seek(0)
-        img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
-        plt.close()  # Close the plot to free memory
-        
-        return jsonify({
-            'success': True,
-            'image': f'data:image/png;base64,{img_base64}',
-            'plot_type': plot_type
-        })
-        
-    except Exception as e:
-        plt.close()  # Ensure plot is closed on error
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/plot/current/<plot_type>')
-def get_current_plot(plot_type):
-    """Generate plots from the current portfolio state"""
-    try:
-        if not current_portfolio_state['has_simulation']:
-            return jsonify({'error': 'No simulation data available'}), 400
-        
-        simulation_id = current_portfolio_state['simulation_id']
-        return get_plot(simulation_id, plot_type)
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
 @app.route('/chart_data/<simulation_id>')
 def get_chart_data(simulation_id):
     """Return portfolio time series as JSON for client-side Chart.js rendering."""
@@ -1983,11 +2013,18 @@ def get_chart_data(simulation_id):
 
         timestamps = [r['date'] for r in results]
         values = [float(r['portfolio_value']) for r in results]
+        # Per-bar session flag so the client can dim points / annotate
+        # tooltips / mark closed segments without losing the flat-hold
+        # value on the chart (portfolio value doesn't move while the
+        # market is closed, so a hard gap looks worse than a labeled
+        # flat segment).
+        market_open_series = [bool(r.get('market_open', True)) for r in results]
 
         return jsonify({
             'success': True,
             'timestamps': timestamps,
             'values': values,
+            'market_open': market_open_series,
             'original_value': original_value,
             'trading_frequency': getattr(simulation, 'trading_frequency', 'daily'),
         })
@@ -2293,6 +2330,96 @@ def _scan_strategy_tickers(tree):
     return tickers
 
 
+class _SimStrategyRuntime:
+    """Mutable binding cell for dashboard imported strategies compiled as generators.
+
+    Helpers close over one instance whose fields `_execute_imported_strategy`
+    refreshes each simulated bar before ``next(generator)``.
+    """
+
+    __slots__ = ('port', 'curtime', 'prices', 'trades', 'tick_budget')
+
+    def __init__(self):
+        self.port = None
+        self.curtime = None
+        self.prices = None
+        self.trades = None
+        self.tick_budget = None
+
+
+class _LoopYieldInjector(ast.NodeTransformer):
+    """Inject ``try: ... finally: yield None`` around every For/While body.
+
+    Dashboard backtest drives ``next(generator)`` once per *simulated* bar
+    (when the venue is open). Live Trading drives it once per wall-clock
+    second. Either way **one completed loop iteration ⇒ one scheduler step**
+    thanks to Python's guarantee that ``continue`` executes ``finally`` before
+    the next iteration.
+    """
+
+    def visit_While(self, node):
+        self.generic_visit(node)
+        wrapped = ast.Try(
+            body=node.body[:],
+            handlers=[],
+            finalbody=[
+                ast.Expr(value=ast.Yield(value=ast.Constant(value=None))),
+            ],
+            orelse=[],
+        )
+        return ast.copy_location(
+            ast.While(test=node.test, body=[wrapped], orelse=node.orelse),
+            node,
+        )
+
+    def visit_For(self, node):
+        self.generic_visit(node)
+        wrapped = ast.Try(
+            body=node.body[:],
+            handlers=[],
+            finalbody=[
+                ast.Expr(value=ast.Yield(value=ast.Constant(value=None))),
+            ],
+            orelse=[],
+        )
+        return ast.copy_location(
+            ast.For(target=node.target, iter=node.iter, body=[wrapped], orelse=node.orelse),
+            node,
+        )
+
+
+def _suite_contains_yield(body):
+    """True if this statement suite contains a Yield (from ``_LoopYieldInjector``)."""
+    for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(node, ast.Yield):
+            return True
+    return False
+
+
+def _wrap_strategy_ast_as_generator_function(tree):
+    """Turn a validated user ``Module`` into ``def __strategy_run__(): ...``."""
+    if not isinstance(tree, ast.Module) or not tree.body:
+        raise ValueError('Strategy must be non-empty.')
+
+    func = ast.FunctionDef(
+        name='__strategy_run__',
+        args=ast.arguments(
+            posonlyargs=[], args=[], kwonlyargs=[],
+            kw_defaults=[], defaults=[],
+        ),
+        body=tree.body,
+        decorator_list=[],
+    )
+    ast.copy_location(func, tree.body[0])
+    wrapped = ast.Module(body=[func], type_ignores=[])
+    if not _suite_contains_yield(func.body):
+        func.body.append(
+            ast.Expr(value=ast.Yield(value=ast.Constant(value=None))),
+        )
+        ast.fix_missing_locations(func.body[-1])
+    return wrapped
+
+
 class _StrategyTickInjector(ast.NodeTransformer):
     """Inject a `_tick()` call at the top of every loop body so timeouts apply to
     `while True:` style loops that never reach a whitelisted call themselves."""
@@ -2341,6 +2468,8 @@ def compile_strategy():
         tree = ast.parse(code, mode='exec')
         _strategy_validate_ast(tree)
         tree = _StrategyTickInjector().visit(tree)
+        tree = _LoopYieldInjector().visit(tree)
+        tree = _wrap_strategy_ast_as_generator_function(tree)
         ast.fix_missing_locations(tree)
         compile(tree, '<strategy>', 'exec')  # final check that the transformed AST compiles cleanly
     except SyntaxError as e:
@@ -2431,6 +2560,12 @@ def run_strategy():
         if qty <= 0:
             _append_log('error', f"buy('{sym}', {qty}) ignored — share count must be positive.")
             return False
+        if not equity_live_rth_execution_allowed():
+            _append_log(
+                'error',
+                'buy() blocked — NYSE is closed (weekend/holiday or outside 9:30 AM–4:00 PM ET).',
+            )
+            return False
         px = _price(sym)
         cost = px * qty
         if cost > state['cash'] + 1e-6:
@@ -2459,6 +2594,12 @@ def run_strategy():
         held = state['positions'].get(sym, 0)
         if qty > held:
             _append_log('error', f"Cannot sell {qty} {sym}; only {held} shares held.")
+            return False
+        if not equity_live_rth_execution_allowed():
+            _append_log(
+                'error',
+                'sell() blocked — NYSE is closed (weekend/holiday or outside 9:30 AM–4:00 PM ET).',
+            )
             return False
         px = _price(sym)
         revenue = px * qty
@@ -2535,8 +2676,8 @@ def run_strategy():
 #
 # Each run lives in `active_live_runs[run_id]` and is driven by a daemon
 # thread, so the user can navigate away from the page and come back to a
-# still-progressing log. The frontend polls /live_status/<run_id> every
-# second for a delta of new log entries.
+# still-progressing log. Each wall-clock second the driver calls ``next()``
+# on a compiled **generator** strategy (one loop iteration per second).
 # ---------------------------------------------------------------------------
 
 active_live_runs = {}  # run_id -> LiveTradingRun
@@ -2544,11 +2685,16 @@ _LIVE_DURATION_SECONDS = 300  # 5 minutes
 
 
 class LiveTradingRun:
-    """One live-trading job. The strategy body re-executes every wall-clock
-    second; helpers (`price`, `buy`, `sell`, `position`, `cash`) mutate the
-    run's shared state directly. We log a line ONLY when a buy/sell actually
-    fills — silent on errors, silent on conditions that don't trigger, silent
-    on no-ops. That matches the "only successful trades are logged" spec.
+    """One live-trading job.
+
+    The strategy compiles into a **generator**: every ``for`` / ``while`` body
+    gets an injected ``yield``. ``_run_loop`` calls ``next(generator)`` once
+    per **wall-clock second**, so **one loop iteration aligns with ~1 second**
+    inside that cadence.
+
+    Helpers (`price`, `buy`, `sell`, `position`, `cash`) mutate the run state.
+    We log a line ONLY when a buy/sell actually fills — silent on errors and
+    on conditions that do not trigger.
     """
 
     def __init__(self, run_id, code, initial_cash, duration_seconds=_LIVE_DURATION_SECONDS):
@@ -2576,6 +2722,12 @@ class LiveTradingRun:
         # don't want to copy them just to avoid the reentry.
         self.lock = threading.RLock()
         self._compiled = None
+        self._live_rth_notice_sent = False
+        self._live_import_gen = None
+        self._live_import_globals = None
+        self._live_import_exhausted = False
+        self._live_tick_budget = None
+        self._live_price_cache = None
 
     # ---- helpers used by the sandboxed strategy --------------------------
 
@@ -2628,6 +2780,8 @@ class LiveTradingRun:
             tree = ast.parse(self.code, mode='exec')
             _strategy_validate_ast(tree)
             tree = _StrategyTickInjector().visit(tree)
+            tree = _LoopYieldInjector().visit(tree)
+            tree = _wrap_strategy_ast_as_generator_function(tree)
             ast.fix_missing_locations(tree)
             self._compiled = compile(tree, f'<live:{self.run_id}>', 'exec')
         except SyntaxError as e:
@@ -2640,6 +2794,9 @@ class LiveTradingRun:
             return
 
         self.is_running = True
+        self._live_import_gen = None
+        self._live_import_globals = None
+        self._live_import_exhausted = False
         self.started_at = time.time()
         thread = threading.Thread(target=self._run_loop, name=f'live-{self.run_id}', daemon=True)
         thread.start()
@@ -2670,25 +2827,30 @@ class LiveTradingRun:
             self.finished_at = time.time()
 
     def _execute_tick(self):
-        """Run the user code once. Each tick has its own price cache so live
-        quotes refresh between iterations; ticks-budget is reset so a single
-        iteration can't blow the 50,000 op limit."""
+        """Advance the live generator by **one loop iteration** (one ``yield``).
+
+        ``_run_loop`` invokes this roughly once per wall-clock second, so loop
+        body work that ends in ``yield`` is paced at ~one second per iteration.
+        The ``price_cache`` is recreated each invocation so intra-second
+        ``price()`` calls stay consistent across that scheduler step.
+        """
         run = self
-        price_cache = {}
-        tick_state = {'ticks': 0, 'start_time': time.time()}
+        run._live_price_cache = {}
+        run._live_tick_budget = {'ticks': 0, 'start': time.time()}
         MAX_TICK_OPS = 50_000
         MAX_TICK_SECONDS = 5.0
 
         def _tick():
-            tick_state['ticks'] += 1
-            if tick_state['ticks'] > MAX_TICK_OPS:
-                raise RuntimeError(f"Tick exceeded {MAX_TICK_OPS:,} operations.")
-            if time.time() - tick_state['start_time'] > MAX_TICK_SECONDS:
-                raise TimeoutError(f"Tick exceeded {MAX_TICK_SECONDS:.0f}s budget.")
+            tb = run._live_tick_budget
+            tb['ticks'] += 1
+            if tb['ticks'] > MAX_TICK_OPS:
+                raise RuntimeError(f'Tick exceeded {MAX_TICK_OPS:,} operations.')
+            if time.time() - tb['start'] > MAX_TICK_SECONDS:
+                raise TimeoutError(f'Tick exceeded {MAX_TICK_SECONDS:.0f}s budget.')
 
         def _price(ticker):
             _tick()
-            return run._live_price(ticker, price_cache)
+            return run._live_price(ticker, run._live_price_cache)
 
         def _buy(ticker, shares):
             _tick()
@@ -2699,11 +2861,19 @@ class LiveTradingRun:
                 return False
             if qty <= 0:
                 return False
-            px = run._live_price(sym, price_cache)
+            if not equity_live_rth_execution_allowed():
+                if not run._live_rth_notice_sent:
+                    run._live_rth_notice_sent = True
+                    run._append_error_log(
+                        '*',
+                        'Orders run only during NYSE regular session (Mon–Fri 9:30 AM–4:00 PM ET, excluding holidays).',
+                    )
+                return False
+            px = run._live_price(sym, run._live_price_cache)
             cost = px * qty
             with run.lock:
                 if cost > run.cash + 1e-6:
-                    return False  # silent: not enough cash → not a "successful trade"
+                    return False
                 run.cash -= cost
                 run.positions[sym] = run.positions.get(sym, 0) + qty
             run._append_trade_log(
@@ -2721,11 +2891,19 @@ class LiveTradingRun:
                 return False
             if qty <= 0:
                 return False
+            if not equity_live_rth_execution_allowed():
+                if not run._live_rth_notice_sent:
+                    run._live_rth_notice_sent = True
+                    run._append_error_log(
+                        '*',
+                        'Orders run only during NYSE regular session (Mon–Fri 9:30 AM–4:00 PM ET, excluding holidays).',
+                    )
+                return False
             with run.lock:
                 held = run.positions.get(sym, 0)
                 if qty > held:
-                    return False  # silent
-                px = run._live_price(sym, price_cache)
+                    return False
+                px = run._live_price(sym, run._live_price_cache)
                 revenue = px * qty
                 run.cash += revenue
                 run.positions[sym] = held - qty
@@ -2746,8 +2924,6 @@ class LiveTradingRun:
                 return float(run.cash)
 
         def _log(*args):
-            # User-side log() is intentionally a no-op for live runs — only
-            # successful trades show up. Counts toward the tick budget.
             _tick()
 
         safe_builtins = {
@@ -2756,24 +2932,50 @@ class LiveTradingRun:
             'int': int, 'float': float, 'str': str, 'bool': bool,
             'True': True, 'False': False, 'None': None,
         }
-        sandbox_globals = {
-            '__builtins__': safe_builtins,
-            '_tick': _tick,
-            'price': _price, 'buy': _buy, 'sell': _sell,
-            'position': _position, 'cash': _cash,
-            'log': _log, 'print': _log,
-        }
+
+        if run._live_import_globals is None:
+            g = {
+                '__builtins__': safe_builtins,
+                '_tick': _tick,
+                'price': _price, 'buy': _buy, 'sell': _sell,
+                'position': _position, 'cash': _cash,
+                'log': _log, 'print': _log,
+            }
+            run._live_import_globals = g
+            try:
+                exec(run._compiled, g, g)
+            except (SyntaxError, ValueError):
+                raise
+            except Exception:
+                logger.exception('Live run %s: strategy exec init failed', run.run_id)
+                run.error = 'Strategy failed to start.'
+                run.is_running = False
+                run._live_import_exhausted = True
+                return
+
+            strat = g.get('__strategy_run__')
+            if not callable(strat):
+                run.error = 'Strategy compilation produced no __strategy_run__.'
+                run.is_running = False
+                run._live_import_exhausted = True
+                return
+            try:
+                run._live_import_gen = strat()
+            except Exception as e:
+                run.error = f'Strategy start error: {e}'
+                run.is_running = False
+                run._live_import_exhausted = True
+                return
+
+        if run._live_import_exhausted:
+            return
 
         try:
-            exec(self._compiled, sandbox_globals, sandbox_globals)
+            next(run._live_import_gen)
+        except StopIteration:
+            run._live_import_exhausted = True
         except LiveQuoteError as e:
-            # The user explicitly asked for "no fallback — if it doesn't
-            # work, say it doesn't work." A fetch failure means the
-            # strategy isn't actually seeing real prices, so we surface
-            # it in the live log (deduped per ticker+message so a 5-min
-            # outage prints once, not 300 times).
             msg = str(e)
-            # Try to recover the ticker name from the message for dedupe.
             tail = msg.split(' for ', 1)
             sym_guess = ''
             if len(tail) > 1:
@@ -2781,10 +2983,8 @@ class LiveTradingRun:
             run._append_error_log(sym_guess, msg)
             logger.debug('Live run %s tick %d quote error: %s', run.run_id, run.tick_count, msg)
         except (TimeoutError, RuntimeError, ValueError) as e:
-            # Strategy-level safety stops (op budget, time budget, bad
-            # input) — keep these out of the user UI; debug-log only.
             logger.debug('Live run %s tick %d non-fatal: %s', run.run_id, run.tick_count, e)
-        except Exception as e:  # pragma: no cover — unexpected
+        except Exception as e:  # pragma: no cover
             logger.debug('Live run %s tick %d unexpected: %s', run.run_id, run.tick_count, e)
 
     # ---- status / snapshot for the polling endpoint ----------------------
@@ -2802,6 +3002,10 @@ class LiveTradingRun:
         with self.lock:
             since = max(0, int(since_index))
             new_log = self.log[since:]
+            # Live RTH check is wall-clock cheap; recompute on every status
+            # poll so the UI banner flips immediately at 9:30 / 16:00 ET
+            # rather than only after a trade attempts to fire.
+            market_open = bool(equity_live_rth_execution_allowed())
             return {
                 'run_id': self.run_id,
                 'is_running': self.is_running,
@@ -2819,6 +3023,12 @@ class LiveTradingRun:
                 'started_at': self.started_at,
                 'finished_at': self.finished_at,
                 'error': self.error,
+                'market_open': market_open,
+                'market_status_message': (
+                    'NYSE regular session — orders enabled.'
+                    if market_open else
+                    'US equity market closed (NYSE weekend, holiday, or outside 9:30 AM–4:00 PM ET). Orders are paused.'
+                ),
             }
 
 
@@ -2830,6 +3040,23 @@ def live_trading():
         theme = 'light'
     embed = request.args.get('embed') == '1'
     return render_template('live_trading.html', theme=theme, embed=embed)
+
+
+@app.route('/market_status')
+def market_status():
+    """Lightweight `is the NYSE open right now?` probe used by the Live
+    Trading page banner so users see "Market closed" even before they hit
+    Start. Wall-clock only; no run id needed."""
+    open_now = bool(equity_live_rth_execution_allowed())
+    return jsonify({
+        'ok': True,
+        'market_open': open_now,
+        'market_status_message': (
+            'NYSE regular session — orders enabled.'
+            if open_now else
+            'US equity market closed (NYSE weekend, holiday, or outside 9:30 AM–4:00 PM ET). Orders are paused.'
+        ),
+    })
 
 
 @app.route('/start_live_trading', methods=['POST'])

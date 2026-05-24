@@ -1,6 +1,6 @@
 let currentSimulationId = null;
 let statusInterval = null;
-let aiChatVisible = false;
+let polledResultCount = 0;
 
 function teebyChatAvatarHtml(small) {
     const src =
@@ -34,12 +34,35 @@ function teebyChatAvatarHtml(small) {
             : '<i class="fas fa-moon" aria-hidden="true"></i>';
     }
 
+    function applyBrowserChrome(t) {
+        var isPlatform =
+            document.documentElement.getAttribute('data-embed') === '1' ||
+            document.querySelector('.ts-dashboard') ||
+            document.querySelector('.studio-shell');
+        var colors = {
+            light: { landing: '#fafafa', platform: '#eef2f7' },
+            dark: { landing: '#070708', platform: '#0c0c0f' }
+        };
+        var surface = isPlatform ? 'platform' : 'landing';
+        var color = colors[t][surface];
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (!meta) {
+            meta = document.createElement('meta');
+            meta.setAttribute('name', 'theme-color');
+            document.head.appendChild(meta);
+        }
+        meta.setAttribute('content', color);
+        document.documentElement.style.colorScheme = t;
+        document.documentElement.dataset.chromeSurface = surface;
+    }
+
     function applyTradeSphereTheme(t) {
         if (t !== 'light' && t !== 'dark') return;
         document.documentElement.setAttribute('data-theme', t);
         try {
             localStorage.setItem('tradesphere-theme', t);
         } catch (e) { /* ignore */ }
+        applyBrowserChrome(t);
         updateTsThemeToggleGlyph();
     }
 
@@ -75,8 +98,6 @@ function teebyChatAvatarHtml(small) {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOMContentLoaded - Initializing app...');
-
     // Duration slider update — refresh the "Last X hours/days of trading"
     // summary + min/max captions on every slider tick.
     const durationSlider = document.getElementById('durationDays');
@@ -124,11 +145,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Show AI advisor immediately for testing
-    setTimeout(() => {
-        showAIAdvisor();
-    }, 500);
-
     document.querySelectorAll('#tickersContainer input[type="text"]').forEach((input) => {
         if (input.value.trim()) {
             validateTicker(input);
@@ -150,7 +166,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // is running, updateHedgeMarginBalance(data) overwrites this with live values.
     initInitialMarginDisplay();
 
-    // Import Strategy (pick a saved Studio strategy + Run → /run_strategy → console output).
     initImportStrategy();
 
     // Strategy card segmented switch (Manual ⇄ Imported).
@@ -317,7 +332,6 @@ async function startSimulation(e) {
     await validateAllTickers();
     
     if (!validateForm(formData)) {
-        console.log('Form validation failed');
         return;
     }
     
@@ -327,7 +341,8 @@ async function startSimulation(e) {
     const progressCard = document.getElementById('progressCard');
     
     startBtn.disabled = true;
-    startBtn.innerHTML = '<span class="loading-spinner"></span> …';
+    startBtn.innerHTML =
+        '<span class="loading-spinner" aria-hidden="true"></span><span class="btn-sim-start__text">Starting…</span>';
     progressCard.style.display = 'block';
 
     // Bring the results panel into view as soon as the user kicks off a sim.
@@ -362,6 +377,7 @@ async function startSimulation(e) {
             // Stale benchmark series (aligned to the previous run's timestamps) — drop them.
             for (const k of Object.keys(_benchmarkCache)) delete _benchmarkCache[k];
             _activeBenchmarks.clear();
+            polledResultCount = 0;
             document.querySelectorAll('.benchmark-chip.active').forEach((c) => c.classList.remove('active'));
             startBtn.style.display = 'none';
             stopBtn.style.display = 'block';
@@ -394,8 +410,9 @@ function stopSimulation() {
 }
 
 function startStatusPolling() {
+    polledResultCount = 0;
     statusInterval = setInterval(() => {
-        fetch(`/simulation_status/${currentSimulationId}`)
+        fetch(`/simulation_status/${currentSimulationId}?since=${polledResultCount}`)
         .then(async (response) => {
             const data = await response.json().catch(() => ({}));
             if (!response.ok) {
@@ -404,9 +421,14 @@ function startStatusPolling() {
             return data;
         })
         .then((data) => {
+            if (typeof data.results_total === 'number') {
+                polledResultCount = data.results_total;
+            } else if (Array.isArray(data.results)) {
+                polledResultCount += data.results.length;
+            }
             updateProgress(data);
             updateResults(data);
-            
+
             if (data.is_complete) {
                 clearInterval(statusInterval);
                 statusInterval = null;
@@ -423,7 +445,9 @@ function startStatusPolling() {
 function updateProgress(data) {
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
-    const results = Array.isArray(data.results) ? data.results : [];
+    const stepCount = typeof data.results_total === 'number'
+        ? data.results_total
+        : (Array.isArray(data.results) ? data.results.length : 0);
     const p = typeof data.progress === 'number' && !Number.isNaN(data.progress) ? data.progress : 0;
     const pct = Math.max(0, Math.min(100, Math.round(p * 100)));
     progressBar.style.width = pct + '%';
@@ -432,10 +456,10 @@ function updateProgress(data) {
     if (data.is_complete) {
         progressText.textContent = 'Simulation Complete!';
     } else if (p > 0 && Number.isFinite(p)) {
-        const approxTotal = Math.max(results.length, Math.round(results.length / p));
-        progressText.textContent = `Progress: ${pct}% (step ${results.length} of ~${approxTotal})`;
+        const approxTotal = Math.max(stepCount, Math.round(stepCount / p));
+        progressText.textContent = `Progress: ${pct}% (step ${stepCount} of ~${approxTotal})`;
     } else {
-        progressText.textContent = `Starting… (${results.length} update${results.length === 1 ? '' : 's'})`;
+        progressText.textContent = `Starting… (${stepCount} update${stepCount === 1 ? '' : 's'})`;
     }
 }
 
@@ -456,11 +480,27 @@ function updateResults(data) {
             }
         });
         
-        // Check for executed one-time rules and trigger evaporation
         checkForExecutedOneTimeRules(data);
-        
-        // Update hedge margin balance display
         updateHedgeMarginBalance(data);
+    }
+
+    if (data.is_complete && currentSimulationId) {
+        if (data.final_metrics) {
+            showFinalResults(data);
+            showPlotsCard();
+        } else {
+            setTimeout(() => {
+                fetch(`/simulation_status/${currentSimulationId}`)
+                    .then((response) => response.json())
+                    .then((freshData) => {
+                        if (freshData.final_metrics) {
+                            showFinalResults(freshData);
+                            showPlotsCard();
+                        }
+                    })
+                    .catch(() => {});
+            }, 1000);
+        }
     }
 }
 
@@ -481,7 +521,6 @@ function checkForExecutedOneTimeRules(data) {
     if (data && data.results && data.results.length > 0) {
         const latestResult = data.results[data.results.length - 1];
         if ((latestResult.one_time_rules_executed || 0) > 0) {
-            console.log(`DEBUG: ${latestResult.one_time_rules_executed} one-time rules were executed`);
             triggerRuleEvaporation();
         }
     }
@@ -490,25 +529,14 @@ function checkForExecutedOneTimeRules(data) {
 // Function to update hedge margin balance display
 function updateHedgeMarginBalance(data) {
     const hedgeMarginElement = document.getElementById('hedgeMarginBalance');
-    console.log('updateHedgeMarginBalance called with data:', data);
-    console.log('hedgeMarginElement found:', !!hedgeMarginElement);
-    
+
     if (hedgeMarginElement && data && data.results && data.results.length > 0) {
         const latestResult = data.results[data.results.length - 1];
-        console.log('Latest result hedge_margin_balance:', latestResult.hedge_margin_balance);
-        
+
         if (latestResult.hedge_margin_balance !== undefined) {
             const balance = latestResult.hedge_margin_balance;
             hedgeMarginElement.innerHTML = `<span class="me-2">Hedge Margin:</span><span>$${balance.toFixed(2)}</span>`;
-            
-            // Color code based on available margin
-            if (balance < 1000) {
-                hedgeMarginElement.className = 'text-danger';
-            } else if (balance < 5000) {
-                hedgeMarginElement.className = 'text-warning';
-            } else {
-                hedgeMarginElement.className = 'text-info';
-            }
+            hedgeMarginElement.className = 'hedge-margin-balance';
         }
     }
 }
@@ -586,42 +614,23 @@ function addDayResult(result) {
 
 
 function showFinalResults(data) {
-    console.log('🎯 showFinalResults called with data:', data);
-    console.log('🔍 Checking for final metrics existence:', !!data.final_metrics);
-    
-    if (!data.final_metrics) {
-        console.error('❌ No final_metrics found in data!');
-        console.log('Available data keys:', Object.keys(data));
-        return;
-    }
+    if (!data.final_metrics) return;
 
     const isFin = (v) => typeof v === 'number' && Number.isFinite(v);
     const fmtMoney = (v) => (isFin(v) ? v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'N/A');
     const fmtFixed = (v, d) => (isFin(v) ? v.toFixed(d) : 'N/A');
     const fmtPctReturn = (v) => (isFin(v) ? `${v >= 0 ? '+' : ''}${v}%` : 'N/A');
-    
+
     try {
-        if (data.final_metrics) {
-            const fm = data.final_metrics;
-            console.log('📊 Final metrics found:', fm);
-            console.log('💰 Final value:', fm.final_value, 'type:', typeof fm.final_value);
-            console.log('📈 Total return:', fm.total_return_pct, 'type:', typeof fm.total_return_pct);
-            console.log('⚡ Sharpe ratio:', fm.sharpe_ratio, 'type:', typeof fm.sharpe_ratio);
-            console.log('📊 Beta:', fm.beta, 'type:', typeof fm.beta);
-            
-            const finalMetricsCard = document.getElementById('finalMetricsCard');
-            const finalMetrics = document.getElementById('finalMetrics');
-            console.log('Final metrics card element:', finalMetricsCard);
-            console.log('Final metrics element:', finalMetrics);
-            if (!finalMetricsCard || !finalMetrics) {
-                console.error('finalMetricsCard or finalMetrics element missing from DOM');
-                return;
-            }
-            
-            const retCls = isFin(fm.total_return_pct) ? (fm.total_return_pct >= 0 ? 'positive' : 'negative') : '';
-            const pnlCls = isFin(fm.total_pnl) ? (fm.total_pnl >= 0 ? 'positive' : 'negative') : '';
-            
-            finalMetrics.innerHTML = `
+        const fm = data.final_metrics;
+        const finalMetricsCard = document.getElementById('finalMetricsCard');
+        const finalMetrics = document.getElementById('finalMetrics');
+        if (!finalMetricsCard || !finalMetrics) return;
+
+        const retCls = isFin(fm.total_return_pct) ? (fm.total_return_pct >= 0 ? 'positive' : 'negative') : '';
+        const pnlCls = isFin(fm.total_pnl) ? (fm.total_pnl >= 0 ? 'positive' : 'negative') : '';
+
+        finalMetrics.innerHTML = `
             <div class="col">
                 <div class="metric-card">
                     <div class="metric-value">$${fmtMoney(fm.final_value)}</div>
@@ -702,75 +711,48 @@ function showFinalResults(data) {
                 </div>
             </div>
         `;
-        
-        
-            finalMetricsCard.style.display = 'block';
-            console.log('Final metrics card should now be visible');
 
-            // Park the viewport ON the grid itself (not the card header / not the bottom of the page).
-            // We defer with rAF + a short timeout so this runs AFTER showAIAdvisor()/showPlotsCard()
-            // mutate layout (expanding the chat, revealing the plots card), otherwise their layout
-            // shifts would knock our scroll position off-target.
-            const focusGrid = () => {
-                const target = finalMetrics || finalMetricsCard;
-                try {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                } catch {
-                    target.scrollIntoView();
-                }
-            };
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => setTimeout(focusGrid, 60));
-            });
+        finalMetricsCard.style.display = 'block';
 
-            // Mosaic entrance — each tile flips on the Y-axis from back to front, staggered
-            // diagonally so they read as a real mosaic of cards turning over to reveal values.
+        const focusGrid = () => {
+            const target = finalMetrics || finalMetricsCard;
             try {
-                const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-                if (reduceMotion) return;
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch {
+                target.scrollIntoView();
+            }
+        };
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => setTimeout(focusGrid, 60));
+        });
 
+        const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        if (!reduceMotion) {
+            try {
                 const cards = Array.from(finalMetrics.querySelectorAll('.metric-card'));
-                finalMetrics.classList.add('is-animating-in'); // hides tiles until WAAPI is queued
-
+                finalMetrics.classList.add('is-animating-in');
                 requestAnimationFrame(() => {
                     cards.forEach((card, idx) => {
-                        const row = Math.floor(idx / 5);
-                        const col = idx % 5;
-                        // Slower diagonal stagger so the cascade is clearly readable as a wave.
-                        const delay = (row + col) * 180;
-                        // Monotonic 180° → 0° flip. The middle keyframe (edge-on at 90°)
-                        // is implicit because the rotation is continuous; we only need
-                        // start + end. Subtle translateZ + scale adds a touch of depth
-                        // so the card "lifts" into place without overshooting.
-                        const keyframes = [
-                            { opacity: 1, transform: 'rotateY(180deg) translateZ(-30px) scale(0.94)' },
-                            { opacity: 1, transform: 'rotateY(0deg) translateZ(0) scale(1)' },
-                        ];
-                        card.animate(keyframes, {
-                            duration: 1500,
-                            delay,
-                            // Smooth deceleration — the flip slows as it lands flat,
-                            // like a real card settling. No overshoot, no bounce.
-                            easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)',
-                            fill: 'forwards',
-                        });
+                        const delay = (Math.floor(idx / 5) + (idx % 5)) * 180;
+                        card.animate(
+                            [
+                                { opacity: 1, transform: 'rotateY(180deg) translateZ(-30px) scale(0.94)' },
+                                { opacity: 1, transform: 'rotateY(0deg) translateZ(0) scale(1)' },
+                            ],
+                            { duration: 1500, delay, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'forwards' },
+                        );
                     });
                     setTimeout(() => finalMetrics.classList.remove('is-animating-in'), 30);
                 });
-            } catch (e) {
-                console.warn('Metric mosaic animation skipped:', e);
+            } catch (_e) {
                 finalMetrics.classList.remove('is-animating-in');
             }
-        } else {
-            console.log('No final metrics found in data');
         }
-        
-        // Update progress to 100%
+
         document.getElementById('progressBar').style.width = '100%';
         document.getElementById('progressText').textContent = 'Simulation Complete!';
     } catch (error) {
         console.error('Error in showFinalResults:', error);
-        console.error('Data that caused error:', data);
     }
 }
 
@@ -809,23 +791,14 @@ function collectFormData() {
     
     const tradingRules = [];
     const ruleInputs = document.querySelectorAll('#tradingRulesContainer .trading-rule');
-    console.log('DEBUG: Found', ruleInputs.length, 'trading rule inputs');
-    
-    ruleInputs.forEach((input, index) => {
+
+    ruleInputs.forEach((input) => {
         const tickerSelect = input.querySelector('.ticker-select');
         const actionSelect = input.querySelector('.action-select');
         const conditionSelect = input.querySelector('select:last-of-type');
         const thresholdInput = input.querySelector('input[type="number"]:first-of-type');
         const sharesInput = input.querySelector('input[type="number"]:last-of-type');
-        
-        console.log(`Rule ${index}:`, {
-            ticker: tickerSelect?.value,
-            action: actionSelect?.value,
-            condition: conditionSelect?.value,
-            threshold: thresholdInput?.value,
-            shares: sharesInput?.value
-        });
-        
+
         if (tickerSelect && tickerSelect.value.trim() && actionSelect.value && conditionSelect.value && thresholdInput.value && sharesInput.value) {
             const isOneTime = input.classList.contains('one-time-mode');
             tradingRules.push({
@@ -838,9 +811,7 @@ function collectFormData() {
             });
         }
     });
-    
-    console.log('DEBUG: Final trading rules array:', tradingRules);
-    
+
     const tradingFrequency = document.getElementById('tradingFrequency').value;
     let span = parseInt(document.getElementById('durationDays').value, 10);
     if (Number.isNaN(span)) {
@@ -860,9 +831,8 @@ function collectFormData() {
 
     // Which strategy lane is the user on? The Strategy card's segmented
     // switch governs whether the simulation engine evaluates manual rules or
-    // executes the imported script body at each interval. Same setup
-    // (intervals, dates, positions, initial cash, hedge); only the
-    // per-tick decision logic differs.
+    // executes the imported script body at each interval. Beta hedge applies
+    // only to manual rules — imported runs ignore it (see collectFormData).
     const strategyCard = document.getElementById('strategyCard');
     const strategyMode = strategyCard && strategyCard.dataset.mode === 'imported'
         ? 'imported'
@@ -876,14 +846,15 @@ function collectFormData() {
         trading_frequency: tradingFrequency,
         tickers: tickers,
         trading_rules: strategyMode === 'manual' ? tradingRules : [],
-        beta_hedge_enabled: document.getElementById('betaHedgeEnabled').checked,
+        beta_hedge_enabled:
+            strategyMode === 'manual' && document.getElementById('betaHedgeEnabled').checked,
         strategy_mode: strategyMode,
     };
 
     if (strategyMode === 'imported') {
         const select = document.getElementById('importStrategySelect');
         const id = select ? select.value : '';
-        const saved = loadSavedStrategies().find((s) => s.id === id);
+        const saved = TradeSphereStrategies.loadSavedStrategies().find((s) => s.id === id);
         if (saved) {
             formData.strategy_code = saved.code || '';
             formData.strategy_name = saved.name || '';
@@ -910,7 +881,7 @@ function validateForm(data) {
     if (data.strategy_mode === 'imported') {
         if (!data.strategy_code || !data.strategy_code.trim()) {
             alert(
-                'You\'re on "Imported" mode but no saved strategy is selected.\n\n' +
+                'You\'re on "Code" mode but no saved strategy is selected.\n\n' +
                 'Pick one from the dropdown in the Strategy card, or save one in the Studio first.'
             );
             return false;
@@ -951,9 +922,6 @@ function validateForm(data) {
     }
     
     if (invalidTickers.length > 0) {
-        console.log('Invalid tickers found:', invalidTickers);
-        console.log('Ticker inputs:', tickerInputs);
-        console.log('Trading rule inputs:', tradingRuleTickerInputs);
         alert(`Invalid ticker symbols: ${invalidTickers.join(', ')}. Please enter valid ticker symbols that exist in Yahoo Finance.`);
         return false;
     }
@@ -990,21 +958,6 @@ function validateForm(data) {
     }
     
     return true;
-}
-
-/**
- * Stock Positions are opening holdings — they do not spend the cash pile.
- * Simulations establish them at market without debiting cash; buys during
- * the run still use cash (and hedge flows use margin as before). No
- * client-side "positions vs cash" gate here.
- */
-function validatePortfolioValue(data) {
-    return {
-        isValid: true,
-        severity: 'success',
-        message: 'Portfolio validation passed.',
-        details: [],
-    };
 }
 
 /**
@@ -1176,18 +1129,14 @@ function initializePortfolioValidation() {
 }
 
 function validatePortfolioInRealTime() {
-    // Debounce the validation to avoid too many calls
     clearTimeout(window.portfolioValidationTimeout);
     window.portfolioValidationTimeout = setTimeout(() => {
-        try {
-            const formData = collectFormData();
-            const validation = validatePortfolioValue(formData);
-            
-            // Update UI to show validation status
-            updatePortfolioValidationUI(validation);
-        } catch (error) {
-            console.log('Portfolio validation error:', error);
-        }
+        updatePortfolioValidationUI({
+            isValid: true,
+            severity: 'success',
+            message: 'Portfolio validation passed.',
+            details: [],
+        });
     }, 500);
 }
 
@@ -1230,7 +1179,8 @@ function resetForm() {
     const stopBtn = document.getElementById('stopBtn');
     
     startBtn.disabled = false;
-    startBtn.innerHTML = '<i class="fas fa-play"></i> Start';
+    startBtn.innerHTML =
+        '<span class="btn-sim-start__icon" aria-hidden="true"><i class="fas fa-play"></i></span><span class="btn-sim-start__text">Start Simulation</span>';
     startBtn.style.display = 'block';
     stopBtn.style.display = 'none';
     
@@ -1304,105 +1254,75 @@ function validateTickerApiPath(ticker) {
     return '/validate_ticker/' + encodeURIComponent(ticker);
 }
 
-function validateTicker(input) {
-    const ticker = input.value.toUpperCase().trim();
-    const isValidFormat = /^[A-Z0-9.\-^]{1,20}$/.test(ticker) && ticker.length >= 1;
-    
-    // Remove existing validation classes
-    input.classList.remove('is-valid', 'is-invalid', 'is-warning');
-    
-    if (ticker.length === 0) {
-        // No validation styling for empty input
-        input.title = '';
-        return;
-    } else if (!isValidFormat) {
-        input.classList.add('is-invalid');
-        input.title = 'Invalid ticker format (e.g., AAPL, BRK.B, BF-B, ^GSPC)';
-        return;
-    }
-    
-    // Show loading state
-    input.classList.add('is-warning');
-    input.title = 'Checking ticker validity...';
-    
-    // Validate ticker against Yahoo Finance
-    validateTickerWithAPI(ticker, input);
-}
-
-function validateTickerWithAPI(ticker, inputElement) {
-    // Debounce API calls to avoid too many requests
-    clearTimeout(window.tickerValidationTimeout);
-    window.tickerValidationTimeout = setTimeout(() => {
-        fetch(validateTickerApiPath(ticker))
-            .then(response => response.json())
-            .then(data => {
-                // Remove loading state
-                inputElement.classList.remove('is-warning');
-                
-                if (data.valid) {
-                    inputElement.classList.add('is-valid');
-                    inputElement.title = `Valid ticker: ${data.name} (${data.exchange})`;
-                    
-                    // Update the ticker value to the validated version
-                    inputElement.value = data.ticker;
-                } else {
-                    inputElement.classList.add('is-invalid');
-                    inputElement.title = data.error || 'Ticker not found in Yahoo Finance database';
-                }
-                
-                // Trigger portfolio validation after ticker validation
-                validatePortfolioInRealTime();
-            })
-            .catch(() => {
-                inputElement.classList.remove('is-warning');
-                inputElement.classList.add('is-invalid');
-                inputElement.title = 'Error validating ticker. Please try again.';
-            });
-    }, 1000); // 1 second delay to avoid too many API calls
-}
-
-async function validateAllTickers() {
-    const tickerInputs = document.querySelectorAll('#tickersContainer input[type="text"]');
-    const tradingRuleTickerInputs = document.querySelectorAll('#tradingRulesContainer .ticker-select');
-    
-    const allInputs = [...tickerInputs, ...tradingRuleTickerInputs];
-    const validationPromises = [];
-    
-    allInputs.forEach(input => {
-        if (input.value.trim() && !input.classList.contains('is-valid') && !input.classList.contains('is-invalid')) {
-            validationPromises.push(validateTickerWithAPIImmediate(input.value.trim(), input));
-        }
-    });
-    
-    if (validationPromises.length > 0) {
-        await Promise.all(validationPromises);
+function applyTickerValidationResult(inputElement, data) {
+    inputElement.classList.remove('is-warning');
+    if (data.valid) {
+        inputElement.classList.remove('is-invalid');
+        inputElement.classList.add('is-valid');
+        inputElement.title = `Valid ticker: ${data.name} (${data.exchange})`;
+        inputElement.value = data.ticker;
+    } else {
+        inputElement.classList.remove('is-valid');
+        inputElement.classList.add('is-invalid');
+        inputElement.title = data.error || 'Ticker not found in Yahoo Finance database';
     }
 }
 
-function validateTickerWithAPIImmediate(ticker, inputElement) {
-    return new Promise((resolve) => {
+function fetchTickerValidation(ticker, inputElement, { debounceMs = 0, refreshPortfolio = false } = {}) {
+    const run = () =>
         fetch(validateTickerApiPath(ticker))
-            .then(response => response.json())
-            .then(data => {
-                if (data.valid) {
-                    inputElement.classList.remove('is-warning', 'is-invalid');
-                    inputElement.classList.add('is-valid');
-                    inputElement.title = `Valid ticker: ${data.name} (${data.exchange})`;
-                    inputElement.value = data.ticker;
-                } else {
-                    inputElement.classList.remove('is-warning', 'is-valid');
-                    inputElement.classList.add('is-invalid');
-                    inputElement.title = data.error || 'Ticker not found in Yahoo Finance database';
-                }
-                resolve();
+            .then((response) => response.json())
+            .then((data) => {
+                applyTickerValidationResult(inputElement, data);
+                if (refreshPortfolio) validatePortfolioInRealTime();
             })
             .catch(() => {
                 inputElement.classList.remove('is-warning', 'is-valid');
                 inputElement.classList.add('is-invalid');
                 inputElement.title = 'Error validating ticker. Please try again.';
-                resolve();
             });
+
+    if (debounceMs > 0) {
+        clearTimeout(window.tickerValidationTimeout);
+        window.tickerValidationTimeout = setTimeout(run, debounceMs);
+        return Promise.resolve();
+    }
+    return run();
+}
+
+function validateTicker(input) {
+    const ticker = input.value.toUpperCase().trim();
+    const isValidFormat = /^[A-Z0-9.\-^]{1,20}$/.test(ticker) && ticker.length >= 1;
+
+    input.classList.remove('is-valid', 'is-invalid', 'is-warning');
+
+    if (ticker.length === 0) {
+        input.title = '';
+        return;
+    }
+    if (!isValidFormat) {
+        input.classList.add('is-invalid');
+        input.title = 'Invalid ticker format (e.g., AAPL, BRK.B, BF-B, ^GSPC)';
+        return;
+    }
+
+    input.classList.add('is-warning');
+    input.title = 'Checking ticker validity...';
+    fetchTickerValidation(ticker, input, { debounceMs: 1000, refreshPortfolio: true });
+}
+
+async function validateAllTickers() {
+    const tickerInputs = document.querySelectorAll('#tickersContainer input[type="text"]');
+    const tradingRuleTickerInputs = document.querySelectorAll('#tradingRulesContainer .ticker-select');
+    const pending = [];
+
+    [...tickerInputs, ...tradingRuleTickerInputs].forEach((input) => {
+        if (input.value.trim() && !input.classList.contains('is-valid') && !input.classList.contains('is-invalid')) {
+            pending.push(fetchTickerValidation(input.value.trim().toUpperCase(), input));
+        }
     });
+
+    if (pending.length > 0) await Promise.all(pending);
 }
 
 function validateTradingRuleTicker(selectElement) {
@@ -1417,9 +1337,7 @@ function validateTradingRuleTicker(selectElement) {
     
     // Show loading state
     selectElement.classList.add('is-warning');
-    
-    // Validate ticker against Yahoo Finance
-    validateTickerWithAPI(ticker, selectElement);
+    fetchTickerValidation(ticker, selectElement, { debounceMs: 1000 });
 }
 
 function removeTradingRule(button) {
@@ -1478,16 +1396,6 @@ function initializeAIChat() {
     });
 }
 
-function showAIAdvisor() {
-    // The Teeby widget is now a floating live-chat launcher that's always
-    // present in the DOM (see #teebyWidget). Nothing to show/hide on the
-    // post-simulation hook anymore — this function is kept so existing
-    // call sites still resolve. We could nudge the user by briefly
-    // bouncing the launcher here, but the pulse-ring animation already
-    // draws attention.
-    return;
-}
-
 /* ---------- Strategy card segmented switch (Manual ⇄ Imported) ----------
    The Strategy card on the right column hosts two panes (Manual rules
    and Imported saved-strategy). The segmented switch in the header
@@ -1542,6 +1450,10 @@ function initStrategyModeSwitch() {
             if (k === mode) el.removeAttribute('hidden');
             else el.setAttribute('hidden', '');
         });
+        const hedgeCb = document.getElementById('betaHedgeEnabled');
+        if (hedgeCb) {
+            hedgeCb.disabled = mode === 'imported';
+        }
         moveThumb(activeBtn);
         try { localStorage.setItem(MODE_KEY, mode); } catch (_) { /* ignore */ }
     };
@@ -1572,6 +1484,7 @@ function initTeebyWidget() {
     const closeBtn = document.getElementById('teebyCloseBtn');
     const inviteCloseBtn = document.getElementById('teebyInviteClose');
     if (!widget || !launcher || !panel) return;
+    if (widget.parentNode !== document.body) document.body.appendChild(widget);
 
     // The Teeby invite bubble only greets the user when they first
     // arrive on the dashboard from the landing page. The Next.js shell
@@ -1588,10 +1501,29 @@ function initTeebyWidget() {
     } catch (_) { /* private mode / disabled — ignore */ }
 
     const inviteEl = document.getElementById('teebyInvite');
+    const INVITE_AUTO_HIDE_MS = 4000;
+    let inviteAutoHideTimer = null;
     let shouldGreet = false;
     try {
         shouldGreet = new URLSearchParams(window.location.search).get('invite') === '1';
     } catch (_) { /* very old browsers — leave greet=false */ }
+
+    const clearInviteAutoHide = () => {
+        if (inviteAutoHideTimer != null) {
+            clearTimeout(inviteAutoHideTimer);
+            inviteAutoHideTimer = null;
+        }
+    };
+
+    const scheduleInviteAutoHide = () => {
+        clearInviteAutoHide();
+        inviteAutoHideTimer = setTimeout(() => {
+            inviteAutoHideTimer = null;
+            if (widget.getAttribute('data-invite-dismissed') === 'true') return;
+            if (widget.getAttribute('data-state') === 'open') return;
+            dismissInvite();
+        }, INVITE_AUTO_HIDE_MS);
+    };
 
     if (shouldGreet) {
         // Show the invite bubble after a short delay so it lands after
@@ -1609,6 +1541,7 @@ function initTeebyWidget() {
                 if (widget.getAttribute('data-invite-dismissed') === 'true') return;
                 if (widget.getAttribute('data-state') === 'open') return;
                 widget.setAttribute('data-invite-shown', 'true');
+                scheduleInviteAutoHide();
             });
         }, 1200);
     }
@@ -1617,6 +1550,7 @@ function initTeebyWidget() {
     // landing page (which adds ?invite=1) will greet the user again;
     // header/in-iframe navigations won't.
     const dismissInvite = () => {
+        clearInviteAutoHide();
         widget.removeAttribute('data-invite-shown');
         widget.setAttribute('data-invite-dismissed', 'true');
     };
@@ -1680,8 +1614,6 @@ function sendAIMessage() {
     
     if (!message) return;
     
-    console.log('sendAIMessage called, currentSimulationId:', currentSimulationId);
-    
     // Add user message
     addMessage('user', message);
     chatInput.value = '';
@@ -1694,8 +1626,7 @@ function sendAIMessage() {
         question: message
     };
     
-    // Only include simulation_id if we have one and it's not the test simulation
-    if (currentSimulationId && currentSimulationId !== 'test-simulation-123') {
+    if (currentSimulationId) {
         requestBody.simulation_id = currentSimulationId;
     }
     
@@ -1711,9 +1642,6 @@ function sendAIMessage() {
     .then(data => {
         hideTypingIndicator();
         
-        console.log('AI Response received:', data);
-        console.log('Analysis content:', data.analysis);
-        
         if (data.success) {
             addMessage('ai', data.analysis);
         } else {
@@ -1728,12 +1656,8 @@ function sendAIMessage() {
 }
 
 function addMessage(sender, text) {
-    console.log('addMessage called:', sender, text);
     const chatMessages = document.getElementById('aiChatMessages');
-    if (!chatMessages) {
-        console.log('chatMessages element not found');
-        return;
-    }
+    if (!chatMessages) return;
     
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}-message`;
@@ -1774,11 +1698,6 @@ function formatMessage(text) {
 function clearAIChat() {
     const chatMessages = document.getElementById('aiChatMessages');
     if (chatMessages) {
-        const chatCollapse = document.getElementById('aiChatCollapse');
-        if (chatCollapse) {
-            chatCollapse.classList.add('show');
-        }
-
         chatMessages.innerHTML = '';
 
         const welcomeMessage = document.createElement('div');
@@ -1876,54 +1795,15 @@ function hideTypingIndicator() {
     }
 }
 
-// Override the existing updateResults function to show AI advisor and plots
-const originalUpdateResults = updateResults;
-updateResults = function(data) {
-    originalUpdateResults(data);
-    checkForExecutedOneTimeRules(data);
-
-    if (data.is_complete && currentSimulationId) {
-        if (data.final_metrics) {
-            showFinalResults(data);
-            showAIAdvisor();
-            showPlotsCard();
-        } else {
-            setTimeout(() => {
-                fetch(`/simulation_status/${currentSimulationId}`)
-                    .then((response) => response.json())
-                    .then((freshData) => {
-                        if (freshData.final_metrics) {
-                            showFinalResults(freshData);
-                            showAIAdvisor();
-                            showPlotsCard();
-                        }
-                    })
-                    .catch(() => {});
-            }, 1000);
-        }
-    }
-};
-
-// Portfolio Plot Functions
 function showPlotsCard() {
-    console.log('showPlotsCard called');
-    try {
-        const plotsCard = document.getElementById('plotsCard');
-        console.log('plotsCard element:', plotsCard);
-        if (plotsCard) {
-            plotsCard.style.display = 'block';
-            // Intentionally NOT scrolling here — the chart card lives in the sidebar.
-            // We want the page to stay on the metrics grid (scrolled into view by showFinalResults).
+    const plotsCard = document.getElementById('plotsCard');
+    if (!plotsCard) return;
+    plotsCard.style.display = 'block';
+    loadPlot('value');
+}
 
-            // Load the default plot (portfolio value)
-            console.log('Loading default plot...');
-            loadPlot('value');
-        } else {
-            console.error('plotsCard element not found!');
-        }
-    } catch (error) {
-        console.error('Error in showPlotsCard:', error);
-    }
+function simulationApiBase(path) {
+    return currentSimulationId ? `${path}/${currentSimulationId}` : `${path}/current`;
 }
 
 
@@ -1945,6 +1825,10 @@ function _chartTheme() {
     const dark = (document.documentElement.getAttribute('data-theme') || 'dark') === 'dark';
     return dark
         ? {
+            valueStroke: '#96ebbf',
+            valueStrokeStrong: '#7fdca7',
+            valueFillTop: 'rgba(150, 235, 191, 0.36)',
+            valueFillBottom: 'rgba(150, 235, 191, 0)',
             stroke: '#22d3ee',
             strokeStrong: '#0891b2',
             fillTop: 'rgba(34, 211, 238, 0.32)',
@@ -1960,6 +1844,10 @@ function _chartTheme() {
             tooltipText: '#f4f4f5',
         }
         : {
+            valueStroke: '#059669',
+            valueStrokeStrong: '#047857',
+            valueFillTop: 'rgba(150, 235, 191, 0.38)',
+            valueFillBottom: 'rgba(150, 235, 191, 0)',
             stroke: '#0284c7',
             strokeStrong: '#4f46e5',
             fillTop: 'rgba(2, 132, 199, 0.22)',
@@ -2028,7 +1916,7 @@ function _renderChart(plotType) {
 
     // Compute the series for the active plot type.
     // NOTE: value / percent / pnl are linear transforms of the same data, so the LINE SHAPE
-    // is identical. We differentiate them stylistically: cyan area (value), diverging
+    // is identical. We differentiate them stylistically: mint area (value), diverging
     // green/red area split at 0% (percent), red/green bars (pnl).
     let series, label, yFormatter, tooltipValueFmt;
     let renderMode = 'line';        // 'line' | 'divergingLine' | 'bars'
@@ -2056,10 +1944,6 @@ function _renderChart(plotType) {
     const ctx = canvas.getContext('2d');
     const wrap = document.getElementById('plotCanvasWrap');
     const h = (wrap && wrap.clientHeight) || 320;
-    const cyanGradient = ctx.createLinearGradient(0, 0, 0, h);
-    cyanGradient.addColorStop(0, theme.fillTop);
-    cyanGradient.addColorStop(1, theme.fillBottom);
-
     const baselineAnnotationY = plotType === 'pnl' || plotType === 'percentage' ? 0 : baseline;
 
     // Per-renderMode dataset configuration.
@@ -2112,18 +1996,21 @@ function _renderChart(plotType) {
             },
         };
     } else {
-        // Default: portfolio value as a smooth cyan area line.
+        // Default: portfolio value as a smooth mint area line.
+        const mintGradient = ctx.createLinearGradient(0, 0, 0, h);
+        mintGradient.addColorStop(0, theme.valueFillTop);
+        mintGradient.addColorStop(1, theme.valueFillBottom);
         primaryDataset = {
             label,
             data: series,
-            borderColor: theme.stroke,
-            backgroundColor: cyanGradient,
+            borderColor: theme.valueStroke,
+            backgroundColor: mintGradient,
             borderWidth: 2,
             fill: 'origin',
             tension: 0.28,
             pointRadius: 0,
             pointHoverRadius: 5,
-            pointHoverBackgroundColor: theme.strokeStrong,
+            pointHoverBackgroundColor: theme.valueStrokeStrong,
             pointHoverBorderColor: '#fff',
             pointHoverBorderWidth: 2,
             spanGaps: true,
@@ -2276,7 +2163,7 @@ function _setBenchmarkChipLoading(sym, loading) {
 
 async function _ensureBenchmarkLoaded(sym) {
     if (_benchmarkCache[sym]) return true;
-    const url = (currentSimulationId && currentSimulationId !== 'test-simulation-123')
+    const url = currentSimulationId
         ? `/benchmark_data/${currentSimulationId}/${sym}`
         : `/benchmark_data/current/${sym}`;
     _setBenchmarkChipLoading(sym, true);
@@ -2333,12 +2220,16 @@ function loadPlot(plotType) {
         const activeBtn = document.querySelector(`[data-plot-type="${plotType}"]`);
         if (activeBtn) activeBtn.classList.add('active');
 
+        if (_chartCache) {
+            _renderChart(plotType);
+            if (plotLoading) plotLoading.style.display = 'none';
+            return;
+        }
+
         if (plotLoading) plotLoading.style.display = 'block';
         _showPlotState('placeholder');
 
-        const url = (currentSimulationId && currentSimulationId !== 'test-simulation-123')
-            ? `/chart_data/${currentSimulationId}`
-            : `/chart_data/current`;
+        const url = simulationApiBase('/chart_data');
 
         fetch(url)
             .then((response) => response.json())
@@ -2387,29 +2278,6 @@ function loadPlot(plotType) {
     obs.observe(document.documentElement, { attributes: true });
 })();
 
-// Make clearAIChat function globally accessible for testing
-window.clearAIChat = clearAIChat;
-
-/* =========================================================================
-   Import Strategy (Trading Dashboard)
-   -------------------------------------------------------------------------
-   Editing happens in /strategy_studio. Here the user just picks a saved
-   strategy out of the same localStorage list, hits Run, and we POST its code
-   to /run_strategy seeded with the dashboard's "Initial Cash Deposit".
-   ========================================================================= */
-
-const STRATEGY_STORAGE_KEY = 'tradesphere_strategies_v1';
-
-function loadSavedStrategies() {
-    try {
-        const raw = localStorage.getItem(STRATEGY_STORAGE_KEY);
-        const list = raw ? JSON.parse(raw) : [];
-        return Array.isArray(list) ? list : [];
-    } catch (_e) {
-        return [];
-    }
-}
-
 function initImportStrategy() {
     // The Imported pane is preview-only on the dashboard. Execution lives on
     // the Live Trading page; here the user just picks a saved strategy out
@@ -2443,7 +2311,7 @@ function initImportStrategy() {
 
     function showPreview() {
         const id = select.value;
-        const s = loadSavedStrategies().find((x) => x.id === id);
+        const s = TradeSphereStrategies.loadSavedStrategies().find((x) => x.id === id);
         if (!s) {
             preview.hidden = true;
             previewCode.textContent = '';
@@ -2454,9 +2322,9 @@ function initImportStrategy() {
     }
 
     function refresh() {
-        const list = loadSavedStrategies()
-            .slice()
-            .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+        const list = TradeSphereStrategies.sortByUpdatedDesc(
+            TradeSphereStrategies.loadSavedStrategies(),
+        );
         const previousId = select.value;
         if (list.length === 0) {
             select.innerHTML = '<option value="">— No saved strategies —</option>';
@@ -2478,12 +2346,8 @@ function initImportStrategy() {
     // strategy in the Studio in another tab) or storage gets mutated.
     window.addEventListener('focus', refresh);
     window.addEventListener('storage', (e) => {
-        if (e.key === STRATEGY_STORAGE_KEY) refresh();
+        if (e.key === TradeSphereStrategies.STORAGE_KEY) refresh();
     });
 
     refresh();
 }
-
-// `renderImportOutput` (previously rendered the dashboard's inline import-run
-// output) has been retired — the dashboard no longer executes imported code.
-// Live Trading renders its own log via static/js/live_trading.js.

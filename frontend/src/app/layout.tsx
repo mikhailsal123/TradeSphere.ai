@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
+import { THEME_BOOT_SCRIPT } from "../lib/browser-chrome";
 import { ThemeProvider } from "./providers";
 
 const geistSans = Geist({
@@ -9,17 +10,12 @@ const geistSans = Geist({
     subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-    variable: "--font-geist-mono",
-    subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
     title: "TradeSphere.ai",
-    description: "AI-Powered Trading Platform - Become Your Own Hedge Fund",
+    description: "AI-Powered Trading Platform",
 };
 
-const themeBootScript = `(function(){try{var t=localStorage.getItem("tradesphere-theme")||"dark";if(t!=="light"&&t!=="dark")t="dark";document.documentElement.classList.toggle("dark",t==="dark");document.documentElement.dataset.theme=t;}catch(e){}})();`;
+const themeBootScript = THEME_BOOT_SCRIPT;
 
 export default function RootLayout({
     children,
@@ -29,7 +25,8 @@ export default function RootLayout({
     return (
         <html lang="en" suppressHydrationWarning>
             <body
-                className={`${geistSans.variable} ${geistMono.variable} ${geistSans.className} min-h-screen antialiased`}
+                className={`${geistSans.variable} ${geistSans.className} min-h-screen antialiased`}
+                suppressHydrationWarning
             >
                 <Script
                     id="tradesphere-theme-boot"

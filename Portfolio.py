@@ -1,6 +1,7 @@
-import datetime
 import logging
+
 from StockData import StockData
+from market_hours import equity_sim_trade_execution_allowed
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -136,6 +137,19 @@ class Portfolio:
                 # If price goes down, we make money (owe less)
                 # The cash from shorting is already in self.cash, so we subtract current value
                 position_val -= (market_price * short_shares)
+
+        # Margin-financed hedge longs are already counted at full market value above;
+        # subtract the borrowed half so NAV reflects equity only (not margin loan).
+        for ticker, hl_shares in self.hedge_long_positions.items():
+            if hl_shares <= 0:
+                continue
+            sd = self._stock_data(ticker)
+            sd.curtime = timestamp
+            market_price = sd.get_price()
+            if market_price is None:
+                market_closed = True
+                break
+            position_val -= market_price * hl_shares * 0.5
         
         # If market is closed, use the last known portfolio value
         if market_closed:
@@ -166,6 +180,8 @@ class Portfolio:
     
     def execute_hedge_trade(self, ticker, price, shares, timestamp, trade_type="short"):
         """Execute a hedge trade and update margin usage"""
+        if not equity_sim_trade_execution_allowed(timestamp, self.yf_interval):
+            return False, "US equity market closed (NYSE weekend/holiday or outside regular session)."
         if trade_type == "short":
             # Short sale: receive cash, owe shares
             trade_value = price * shares
@@ -274,7 +290,9 @@ class Portfolio:
             pos = self.positions.get(ticker, 0)
             if pos < shares:
                 return False, f"Insufficient position. Have {pos} shares, trying to sell {shares}"
-            self.cash += trade_value
+            # Only the non-borrowed half of sale proceeds is equity; the rest repays the margin loan.
+            equity_proceeds = trade_value * 0.5
+            self.cash += equity_proceeds
             self.positions[ticker] = pos - shares
             if self.positions[ticker] <= 0:
                 del self.positions[ticker]
@@ -290,12 +308,48 @@ class Portfolio:
                 'shares': shares,
                 'price': price,
                 'value': trade_value,
+                'equity_proceeds': equity_proceeds,
                 'margin_released': margin_released,
             }
             self.hedge_trades.append(hedge_trade)
             return True, f"Hedged: Sold {shares} {ticker} @ ${price:.2f} (closed hedge long, margin released ${margin_released:.2f})"
 
         return False, "Invalid trade type"
+
+    def close_all_hedge_positions(self, timestamp, prices=None):
+        """Unwind all beta-hedge shorts and margin longs (e.g. at end of simulation)."""
+        prices = prices or {}
+        messages = []
+
+        for ticker, shares in list(self.short_positions.items()):
+            if shares <= 0:
+                continue
+            price = prices.get(ticker)
+            if price is None:
+                sd = self._stock_data(ticker)
+                sd.curtime = timestamp
+                price = sd.get_price()
+            if price is None:
+                messages.append(f"Could not close short {ticker}: no price")
+                continue
+            ok, msg = self.execute_hedge_trade(ticker, price, shares, timestamp, 'buy')
+            messages.append(msg if ok else f"Close short failed: {msg}")
+
+        for ticker, shares in list(self.hedge_long_positions.items()):
+            if shares <= 0:
+                continue
+            price = prices.get(ticker)
+            if price is None:
+                sd = self._stock_data(ticker)
+                sd.curtime = timestamp
+                price = sd.get_price()
+            if price is None:
+                messages.append(f"Could not close hedge long {ticker}: no price")
+                continue
+            ok, msg = self.execute_hedge_trade(ticker, price, shares, timestamp, 'sell_hedge_long')
+            messages.append(msg if ok else f"Close hedge long failed: {msg}")
+
+        return messages
 
     def summary(self, timestamp):
         print(f"CASH: ${self.cash}")
@@ -312,6 +366,13 @@ class Portfolio:
         """
         Buy shares of a stock with cash validation to prevent exceeding initial portfolio value.
         """
+        if not equity_sim_trade_execution_allowed(timestamp, self.yf_interval):
+            _plog.debug(
+                "buy blocked: outside NYSE session for simulated bar (%s)",
+                self.yf_interval,
+            )
+            return
+
         sd = self._stock_data(ticker)
         sd.curtime = timestamp  # Set the current time for the stock data
         market_price = sd.get_price()
@@ -410,6 +471,13 @@ class Portfolio:
     
     def sell(self, ticker, price, shares, timestamp):
         """Sell at market when price is 0 (simulation market order); otherwise limit-style floor at `price`."""
+        if not equity_sim_trade_execution_allowed(timestamp, self.yf_interval):
+            _plog.debug(
+                "sell blocked: outside NYSE session for simulated bar (%s)",
+                self.yf_interval,
+            )
+            return
+
         sd = self._stock_data(ticker)
         sd.curtime = timestamp  # Set the current time for the stock data
         market_price = sd.get_price()

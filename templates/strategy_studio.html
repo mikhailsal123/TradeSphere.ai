@@ -1,14 +1,28 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="{{ theme }}">
+<html lang="en" data-theme="{{ theme }}"{% if embed %} data-embed="1"{% endif %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="{% if theme == 'light' %}#eef2f7{% else %}#0c0c0f{% endif %}">
     <title>Strategy Studio · TradeSphere</title>
     <script>
     (function () {
+        function applyBrowserChrome(t) {
+            var c = t === 'light' ? '#eef2f7' : '#0c0c0f';
+            document.documentElement.style.colorScheme = t;
+            document.documentElement.style.backgroundColor = c;
+            var m = document.querySelector('meta[name="theme-color"]');
+            if (!m) {
+                m = document.createElement('meta');
+                m.setAttribute('name', 'theme-color');
+                document.head.appendChild(m);
+            }
+            m.setAttribute('content', c);
+        }
         function applyTheme(t) {
             if (t !== 'light' && t !== 'dark') return;
             document.documentElement.setAttribute('data-theme', t);
+            applyBrowserChrome(t);
             try { localStorage.setItem('tradesphere-theme', t); } catch (e) {}
             var btn = document.getElementById('tsThemeToggle');
             if (btn) {
@@ -56,8 +70,8 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='css/style.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
-    <link href="{{ url_for('static', filename='css/tradesphere-theme.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}?v={{ static_asset_version }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/tradesphere-theme.css') }}?v={{ static_asset_version }}" rel="stylesheet">
 </head>
 <body id="top" class="studio-body">
     <div class="container-fluid studio-shell">
@@ -168,12 +182,13 @@
     {% endif %}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/strategies-storage.js') }}?v={{ static_asset_version }}"></script>
     <!-- CodeMirror 5 core + python mode + show-hint addon. Loaded synchronously
          so strategy_studio.js can attach to a global CodeMirror right after. -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
-    <script src="{{ url_for('static', filename='js/strategy_studio.js') }}?v={{ range(1000, 9999) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/strategy_studio.js') }}?v={{ static_asset_version }}"></script>
 </body>
 </html>

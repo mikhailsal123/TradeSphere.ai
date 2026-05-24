@@ -7,26 +7,8 @@
 (function () {
     "use strict";
 
-    const STORAGE_KEY = "tradesphere_strategies_v1";
-
-    // ── localStorage helpers ────────────────────────────────────────────────
-    function loadStrategies() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            const list = raw ? JSON.parse(raw) : [];
-            return Array.isArray(list) ? list : [];
-        } catch (_e) {
-            return [];
-        }
-    }
-
-    function persistStrategies(list) {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-        } catch (e) {
-            console.warn("Could not persist strategies:", e);
-        }
-    }
+    const loadStrategies = () => TradeSphereStrategies.loadSavedStrategies();
+    const persistStrategies = (list) => TradeSphereStrategies.persistStrategies(list);
 
     function makeId() {
         return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);

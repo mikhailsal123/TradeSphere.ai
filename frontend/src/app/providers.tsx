@@ -4,14 +4,14 @@ import React, {
     createContext,
     useCallback,
     useContext,
-    useEffect,
     useLayoutEffect,
     useMemo,
     useRef,
     useState,
 } from "react";
+import type { TradeSphereTheme } from "../lib/browser-chrome";
 
-export type TradeSphereTheme = "light" | "dark";
+export type { TradeSphereTheme };
 
 type ThemeContextValue = {
     theme: TradeSphereTheme;
@@ -47,6 +47,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         } catch {
             /* ignore */
         }
+        /* Browser chrome (theme-color + canvas) is applied in page.tsx for the active surface. */
     }, []);
 
     useLayoutEffect(() => {
@@ -56,7 +57,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         skipThemeEffect.current = true;
     }, [applyDom]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (skipThemeEffect.current) {
             skipThemeEffect.current = false;
             return;

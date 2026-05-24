@@ -142,8 +142,8 @@ small {
 }
 
 .trading-rule.one-time-mode {
-    border-color: #3b82f6;
-    background-color: #eff6ff;
+    border-color: transparent;
+    background-color: transparent;
 }
 
 .sidebar {
@@ -219,14 +219,19 @@ small {
 
 #progressCard > .card-header h5 {
     margin: 0;
+    font-size: 1.25rem;
     font-weight: 600;
     letter-spacing: -0.025em;
     color: #0a3d24;
-    line-height: 1.2;
+    line-height: 1.25;
 }
 
-.card-header h3, .card-header h4, .card-header h5 {
+.card-header h3,
+.card-header h4,
+.card-header h5,
+.card-header h6 {
     margin: 0;
+    font-size: 1.25rem;
     font-weight: 600;
     letter-spacing: -0.025em;
 }
@@ -359,7 +364,7 @@ small {
    Keep the prefix visually anchored to the field, matching the segmented
    interval control's outer border treatment. */
 .initial-cash-group .initial-cash-prefix {
-    font-weight: 700;
+    font-weight: 400;
     color: #475569;
     background: #f8fafc;
     border: 1px solid #cbd5e1;
@@ -528,7 +533,7 @@ html[data-theme="dark"] .initial-cash-group .initial-cash-prefix {
     text-align: center;
     padding: 20px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #6366f1 0%, #7c3aed 55%, #6d28d9 100%);
     color: white;
     margin-bottom: 15px;
 }
@@ -575,9 +580,9 @@ html[data-theme="dark"] .initial-cash-group .initial-cash-prefix {
 }
 
 .plot-btn-group .btn.active {
-    background-color: #0d6efd;
-    border-color: #0d6efd;
-    color: white;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #7c3aed 100%);
+    border-color: transparent;
+    color: #fff;
 }
 
 #plotLoading {
@@ -589,9 +594,10 @@ html[data-theme="dark"] .initial-cash-group .initial-cash-prefix {
     font-size: 1.1rem;
 }
 
+#plotsCard .card-header h5,
 #plotsCard .card-header h6 {
     margin-bottom: 0;
-    font-size: 1.2rem;
+    font-size: 1.25rem;
     font-weight: 600;
 }
 
@@ -929,18 +935,16 @@ html[data-theme="dark"] .initial-cash-group .initial-cash-prefix {
     }
 }
 
-/* "Open Studio" link button in the Import Strategy card header. Uses the
-   dark-green header-text color (#0a3d24) so it reads clearly against the
-   mint card-header background instead of disappearing into it. */
-.btn-open-studio {
+/* Open Studio without .ts-header-action — legacy mint-header look */
+.btn-open-studio:not(.ts-header-action) {
     color: #0a3d24;
     background-color: rgba(255, 255, 255, 0.45);
     border: 1px solid #0a3d24;
     font-weight: 600;
 }
 
-.btn-open-studio:hover,
-.btn-open-studio:focus {
+.btn-open-studio:not(.ts-header-action):hover,
+.btn-open-studio:not(.ts-header-action):focus {
     color: #ffffff;
     background-color: #0a3d24;
     border-color: #0a3d24;
@@ -1080,25 +1084,30 @@ html[data-theme="dark"] .initial-cash-group .initial-cash-prefix {
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
-/* One-time trading rule styles */
+/* One-time — default border unchanged; purple gradient fills interior (no white plate) */
 .trading-rule.one-time-mode {
-    background: linear-gradient(135deg, #fff3cd, #ffeaa7);
-    border: 2px solid #ffc107;
+    position: relative;
+    background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #7c3aed 100%);
+    background-color: transparent;
+    background-clip: padding-box;
+    -webkit-background-clip: padding-box;
+    background-origin: padding-box;
     border-radius: 8px;
-    box-shadow: 0 0 15px rgba(255, 193, 7, 0.3);
+    padding: 4px;
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
     animation: pulse-glow 2s infinite;
 }
 
 .trading-rule.one-time-mode .input-group {
-    background: rgba(255, 255, 255, 0.8);
-    border-radius: 6px;
-    padding: 4px;
+    background: transparent !important;
+    border-radius: 0;
+    padding: 0;
 }
 
 @keyframes pulse-glow {
-    0% { box-shadow: 0 0 15px rgba(255, 193, 7, 0.3); }
-    50% { box-shadow: 0 0 25px rgba(255, 193, 7, 0.6); }
-    100% { box-shadow: 0 0 15px rgba(255, 193, 7, 0.3); }
+    0% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.3); }
+    50% { box-shadow: 0 0 25px rgba(124, 58, 237, 0.6); }
+    100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.3); }
 }
 
 /* Sand evaporation effect for executed one-time rules */
@@ -1644,11 +1653,27 @@ html[data-theme="light"] .live-portfolio-strip {
    (relative to the iframe viewport) so it floats over page content like
    Intercom/Drift.
 */
+#teeby-platform-host .teeby-widget {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 2147483000;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
+}
+
+#teeby-platform-host .teeby-widget > * {
+    pointer-events: auto;
+}
+
 .teeby-widget {
     position: fixed;
-    bottom: 22px;
     right: 22px;
-    z-index: 1090;
+    bottom: 22px;
+    z-index: 2147483000;
+    margin: 0;
+    padding: 0;
     pointer-events: none;
 }
 .teeby-widget > * {
@@ -1782,10 +1807,10 @@ html[data-theme="light"] .live-portfolio-strip {
     margin: 0;
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 0.95rem;
+    font-size: 1.25rem;
     font-weight: 600;
     color: #0a3d24;
-    line-height: 1.3;
+    line-height: 1.25;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2153,7 +2178,7 @@ html[data-theme="light"] .live-portfolio-strip {
     opacity: 1;
 }
 .strategy-mode-option:focus-visible {
-    outline: 2px solid #0a3d24;
+    outline: 2px solid #8b5cf6;
     outline-offset: 2px;
 }
 /* The sliding thumb. Width/left are set inline by JS so it tracks the
@@ -2164,28 +2189,18 @@ html[data-theme="light"] .live-portfolio-strip {
     bottom: 4px;
     left: 4px;
     width: 100px;
-    background: linear-gradient(135deg, #0c6136 0%, #1a7d4b 60%, #2da66a 100%);
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #7c3aed 100%);
     border-radius: 999px;
-    box-shadow: 0 2px 6px rgba(10, 61, 36, 0.28);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.32);
     transition: left 0.28s cubic-bezier(.34,1.4,.64,1),
                 width 0.28s cubic-bezier(.34,1.4,.64,1);
     z-index: 1;
     pointer-events: none;
 }
 
-/* Open Studio anchor — only meaningful for the Imported pane, so we fade
-   it out (visibility:hidden so it still reserves header width) when the
-   user is in Manual mode. */
-#strategyCard[data-mode="manual"] .strategy-open-studio {
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-}
-#strategyCard[data-mode="imported"] .strategy-open-studio {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transition: opacity 0.2s ease;
+/* Open Studio — always visible; mint styling applied in tradesphere-theme when Code is active */
+#strategyCard .strategy-open-studio {
+    transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
 @media (max-width: 640px) {

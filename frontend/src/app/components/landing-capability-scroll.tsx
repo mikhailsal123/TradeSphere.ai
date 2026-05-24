@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { browserChromeColor } from "../../lib/browser-chrome";
 
 type Step = {
     id: string;
@@ -117,12 +118,12 @@ export function LandingCapabilityScroll({ theme }: LandingCapabilityScrollProps)
     }, [measureActive]);
 
     const isDark = theme === "dark";
-    const sectionBg = isDark ? "bg-[#070708]" : "bg-zinc-50";
+    const sectionCanvasColor = browserChromeColor(theme, "landing");
     const borderMuted = isDark ? "border-zinc-800/80" : "border-zinc-200";
     const eyebrow = isDark ? "text-zinc-500" : "text-zinc-500";
     const titleMuted = isDark ? "text-zinc-100" : "text-slate-900";
     const bodyMuted = isDark ? "text-zinc-400" : "text-slate-600";
-    const railMuted = isDark ? "text-zinc-600" : "text-zinc-400";
+    const railText = isDark ? "text-white" : "text-black";
     const railActive = "text-[#96ebbf]";
     const cardBg = isDark ? "bg-zinc-900/40" : "bg-white/80";
     const cardBorder = isDark ? "border-zinc-800/90" : "border-zinc-200/90";
@@ -130,7 +131,8 @@ export function LandingCapabilityScroll({ theme }: LandingCapabilityScrollProps)
     return (
         <section
             id="landing-capability-section"
-            className={`relative scroll-mt-24 border-t ${borderMuted} ${sectionBg} px-4 py-16 sm:px-6 sm:py-20 md:py-24`}
+            className={`relative scroll-mt-24 border-t ${borderMuted} px-4 py-16 sm:px-6 sm:py-20 md:py-24`}
+            style={{ backgroundColor: sectionCanvasColor }}
             aria-labelledby="landing-capability-heading"
         >
             <div className="mx-auto max-w-6xl">
@@ -169,7 +171,7 @@ export function LandingCapabilityScroll({ theme }: LandingCapabilityScrollProps)
                                                 className={`flex w-full items-baseline gap-3 rounded-lg border px-3 py-2.5 text-left transition-all duration-500 md:border-0 md:px-0 md:py-4 ${railOnRight ? "md:justify-end md:text-right" : ""} ${
                                                     railIsActive
                                                         ? `border-[#96ebbf]/35 bg-[#96ebbf]/[0.07] md:bg-transparent ${railActive}`
-                                                        : `${isDark ? "border-zinc-800 bg-zinc-900/30" : "border-zinc-200 bg-white/60"} md:border-transparent md:bg-transparent ${railMuted} ${isDark ? "hover:text-zinc-300" : "hover:text-slate-700"}`
+                                                        : `${isDark ? "border-zinc-800 bg-zinc-900/30" : "border-zinc-200 bg-white/60"} md:border-transparent md:bg-transparent ${railText} ${isDark ? "hover:text-zinc-300" : "hover:text-slate-700"}`
                                                 } `}
                                             >
                                                 <span

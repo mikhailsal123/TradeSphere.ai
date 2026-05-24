@@ -1,8 +1,17 @@
+"use client";
+
+import { useTradeSphereTheme } from "../providers";
+
 /** Document-flow footer — sits at the end of the page layout (scroll to see). Same on landing and platform. */
 export function SiteFooter() {
+    const { theme } = useTradeSphereTheme();
+
     return (
         <footer
-            className="relative z-20 flex w-full shrink-0 flex-col gap-4 border-t border-zinc-700/60 bg-black px-6 py-3"
+            className={`ts-site-footer relative z-20 flex w-full shrink-0 flex-col gap-4 border-t px-6 py-3 ${
+                theme === "dark" ? "border-zinc-700/60" : "border-[#96ebbf]"
+            }`}
+            style={{ backgroundColor: "#070708" }}
             data-ts-site-footer
             data-landing-slogan-rail
         >

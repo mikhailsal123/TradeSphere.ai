@@ -12,6 +12,8 @@ type SyntaxTypingAnimationProps = {
     duration?: number;
     delay?: number;
     startOnView?: boolean;
+    /** Pause after the line finishes, then restart typing (0 = no loop). */
+    loopPauseMs?: number;
 };
 
 function renderHighlighted(segments: SyntaxToken[], charCount: number) {
@@ -40,6 +42,7 @@ export function SyntaxTypingAnimation({
     duration = 100,
     delay = 0,
     startOnView = false,
+    loopPauseMs = 0,
 }: SyntaxTypingAnimationProps) {
     const fullText = segments.map((s) => s.text).join("");
     const [visibleCount, setVisibleCount] = useState(0);
@@ -62,18 +65,36 @@ export function SyntaxTypingAnimation({
 
     useEffect(() => {
         if (!started) return;
-        setVisibleCount(0);
         let i = 0;
-        const id = setInterval(() => {
-            if (i < fullText.length) {
-                setVisibleCount(i + 1);
-                i++;
-            } else {
-                clearInterval(id);
-            }
-        }, duration);
-        return () => clearInterval(id);
-    }, [started, fullText, duration]);
+        let tickId = 0;
+        let pauseId = 0;
+
+        const runTick = () => {
+            tickId = window.setInterval(() => {
+                if (i < fullText.length) {
+                    i += 1;
+                    setVisibleCount(i);
+                } else {
+                    clearInterval(tickId);
+                    tickId = 0;
+                    if (loopPauseMs > 0) {
+                        pauseId = window.setTimeout(() => {
+                            i = 0;
+                            setVisibleCount(0);
+                            runTick();
+                        }, loopPauseMs);
+                    }
+                }
+            }, duration);
+        };
+
+        setVisibleCount(0);
+        runTick();
+        return () => {
+            if (tickId) clearInterval(tickId);
+            if (pauseId) clearTimeout(pauseId);
+        };
+    }, [started, fullText, duration, loopPauseMs]);
 
     return (
         <motion.div

@@ -3,6 +3,48 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Browser overscroll + native UI (scrollbars, form controls) follow theme. */
+html {
+  color-scheme: light dark;
+}
+
+html.dark,
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html:not(.dark)[data-theme="light"],
+html:not(.dark):not([data-theme="dark"]) {
+  color-scheme: light;
+}
+
+/* Browser chrome canvas — sync with TS_SURFACE_COLORS in browser-chrome.ts */
+html,
+body {
+  background-color: #070708;
+}
+
+html[data-theme="light"],
+html[data-theme="light"] body {
+  background-color: #fafafa;
+}
+
+html[data-theme="dark"][data-chrome-surface="platform"],
+html[data-theme="dark"][data-chrome-surface="platform"] body {
+  background-color: #0c0c0f;
+}
+
+html[data-theme="light"][data-chrome-surface="platform"],
+html[data-theme="light"][data-chrome-surface="platform"] body {
+  background-color: #eef2f7;
+}
+
+/* Landing + platform footers — single swatch (Flask .ts-site-footer + Next SiteFooter). */
+footer[data-ts-site-footer],
+.ts-site-footer {
+  background-color: #070708 !important;
+}
+
 @theme inline {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
@@ -223,6 +265,12 @@ html:not(.dark) .ts-syntax-typing .text-rose-400 {
 }
 html:not(.dark) .ts-syntax-typing .text-sky-400 {
   color: rgb(2 132 199) !important;
+}
+
+/* Platform shell — snap theme instantly (no background/color tween on chrome). */
+.ts-platform-instant-theme,
+.ts-platform-instant-theme * {
+  transition-property: transform, opacity, filter, box-shadow !important;
 }
 
 /* Execute Trades Button Hover Effect */

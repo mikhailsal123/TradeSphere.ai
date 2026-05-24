@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="{{ theme }}">
+<html lang="en" data-theme="{{ theme }}"{% if embed %} data-embed="1"{% endif %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="{% if theme == 'light' %}#eef2f7{% else %}#0c0c0f{% endif %}">
     <title>Trading Dashboard</title>
     <script>
     (function () {
@@ -11,6 +12,11 @@
             var s = localStorage.getItem('tradesphere-theme');
             var t = (u === 'light' || u === 'dark') ? u : ((s === 'light' || s === 'dark') ? s : '{{ theme }}');
             document.documentElement.setAttribute('data-theme', t);
+            var c = t === 'light' ? '#eef2f7' : '#0c0c0f';
+            document.documentElement.style.colorScheme = t;
+            document.documentElement.style.backgroundColor = c;
+            var m = document.querySelector('meta[name="theme-color"]');
+            if (m) m.setAttribute('content', c);
         } catch (e) {}
         // Tell the parent shell that the iframe is now on the dashboard so the
         // Next.js top nav can highlight Dashboard (in case the user got here
@@ -27,12 +33,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='css/style.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
-    <link href="{{ url_for('static', filename='css/tradesphere-theme.css') }}?v={{ range(1000, 9999) | random }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}?v={{ static_asset_version }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/tradesphere-theme.css') }}?v={{ static_asset_version }}" rel="stylesheet">
 </head>
 <body id="top">
-    <div class="container-fluid">
-        <div class="row">
+    <div class="container-fluid ts-dashboard">
+        <div class="row ts-dashboard__row">
             <!-- Sidebar -->
             <div class="col-md-4 sidebar">
                 <div class="card">
@@ -43,10 +49,10 @@
                         <form id="simulationForm">
                             <!-- Initial Cash -->
                             <div class="mb-3">
-                                <label for="initialCash" class="form-label">Initial Cash Deposit</label>
+                                <label for="initialCash" class="form-label"><strong>Initial Cash Deposit</strong></label>
                                 <div class="input-group initial-cash-group">
                                     <span class="input-group-text initial-cash-prefix">$</span>
-                                    <input type="text" inputmode="numeric" class="form-control" id="initialCash" value="110,000" autocomplete="off" data-min="1000">
+                                    <input type="text" inputmode="numeric" class="form-control ts-helper-copy" id="initialCash" value="110,000" autocomplete="off" data-min="1000">
                                 </div>
                             </div>
 
@@ -55,7 +61,7 @@
                                  existing JS (`document.getElementById('tradingFrequency').value`)
                                  keeps working without changes. -->
                             <div class="mb-3">
-                                <label class="form-label d-block">Trading Frequency</label>
+                                <label class="form-label d-block"><strong>Trading Frequency</strong></label>
                                 <div class="trading-frequency-buttons" role="group" aria-label="Trading time interval">
                                     <button type="button" class="ts-interval-btn" data-value="1m" onclick="selectTradingFrequency(this)" aria-pressed="false">1m</button>
                                     <button type="button" class="ts-interval-btn" data-value="5m"    onclick="selectTradingFrequency(this)" aria-pressed="false">5m</button>
@@ -64,18 +70,18 @@
                                     <button type="button" class="ts-interval-btn active" data-value="daily" onclick="selectTradingFrequency(this)" aria-pressed="true">Daily</button>
                                 </div>
                                 <input type="hidden" id="tradingFrequency" value="daily">
-                                <small class="text-dark ms-2 mt-1 d-block" id="frequencyHelp"></small>
+                                <p class="ts-helper-copy ms-2 mt-1 mb-0" id="frequencyHelp"></p>
                             </div>
 
                             <!-- Date Range: label → info box → slider with tight min/max captions -->
                             <div class="mb-3">
-                                <label for="durationDays" class="form-label">Date Range</label>
+                                <label for="durationDays" class="form-label"><strong>Date Range</strong></label>
                                 <div class="alert alert-info py-2 mb-2">
-                                    <small>
+                                    <p class="ts-helper-copy mb-0">
                                         <i class="fas fa-info-circle"></i>
                                         <strong>Range:</strong> <span id="dateRangeSummary">Last 100 days of trading</span>
-                                    </small>
-                                    <div id="dateRangeInfo" class="small mt-1" hidden></div>
+                                    </p>
+                                    <div id="dateRangeInfo" class="ts-helper-copy mt-1" hidden></div>
                                 </div>
                                 <input type="range" class="form-range duration-slider" id="durationDays" min="1" max="365" value="100">
                                 <div class="d-flex justify-content-between duration-slider-captions">
@@ -88,7 +94,7 @@
                                  They do not reduce Initial Cash; the sim establishes them
                                  at market without debiting cash. Buys during the run use cash. -->
                             <div class="mb-3">
-                                <label class="form-label">Stock Positions</label>
+                                <label class="form-label"><strong>Stock Positions</strong></label>
                                 <div id="tickersContainer">
                                     <div class="ticker-input mb-2">
                                         <div class="input-group">
@@ -136,14 +142,14 @@
                 </div>
 
                 <!-- Performance Charts — own card in the sidebar, below the form -->
-                <div class="card mt-2 sidebar-plots-card" id="plotsCard" style="display: none;">
+                <div class="card sidebar-plots-card" id="plotsCard" style="display: none;">
                     <div class="card-header py-3">
                         <h5 class="mb-0">Performance Charts</h5>
                     </div>
                     <div class="card-body p-2">
                         <!-- Plot Controls -->
                         <div class="mb-2">
-                            <div class="btn-group btn-group-sm w-100" role="group" aria-label="Plot types">
+                            <div class="btn-group btn-group-sm w-100 plot-btn-group" role="group" aria-label="Plot types">
                                 <button type="button" class="btn btn-outline-primary active" id="valuePlotBtn" data-plot-type="value">
                                     <i class="fas fa-chart-line"></i>
                                 </button>
@@ -193,7 +199,7 @@
             <!-- Main Content -->
             <div class="col-md-8">
                 <!-- Progress Bar -->
-                <div class="card mb-3" id="progressCard" style="display: none;">
+                <div class="card" id="progressCard" style="display: none;">
                     <div class="card-header py-2">
                         <h5 class="mb-0">Simulation Progress</h5>
                     </div>
@@ -207,23 +213,24 @@
 
                 <!-- Results Display -->
                 <div class="card" id="simulationResultsCard">
-                    <div class="card-header simulation-results-header d-flex align-items-center justify-content-between flex-wrap gap-2 py-3">
-                        <h4 class="mb-0">Simulation Results</h4>
+                    <div class="card-header ts-brand-header simulation-results-header d-flex align-items-center justify-content-between">
+                        <h4 class="mb-0 ts-brand-title">Simulation Results</h4>
                         <button type="button"
-                                class="btn btn-sim-start"
+                                class="btn btn-sim-start ts-header-action"
                                 id="startBtn"
                                 onclick="startSimulation(event)">
-                            <i class="fas fa-play" aria-hidden="true"></i> Start
+                            <span class="btn-sim-start__icon" aria-hidden="true"><i class="fas fa-play"></i></span>
+                            <span class="btn-sim-start__text">Start Simulation</span>
                         </button>
                     </div>
                     <div class="card-body">
                         <div id="resultsContainer">
-                            <div class="text-center text-dark">
-                                <p class="mb-0">Configure your portfolio, then press the <strong>Start</strong> button above to run tests</p>
+                            <div class="results-empty-state">
+                                <p class="mb-0">Configure your portfolio, then press <strong>Start Simulation</strong> above to run tests</p>
                             </div>
                         </div>
-                        <!-- Stop only: Start lives in the mint card-header. -->
-                        <div class="mt-3" id="runControls">
+                        <!-- Stop only: Start Simulation lives in the mint card-header. -->
+                        <div class="mt-0" id="runControls">
                             <button type="button" class="btn btn-danger" id="stopBtn" style="display: none;">
                                 <i class="fas fa-stop"></i> Stop Simulation
                             </button>
@@ -232,9 +239,9 @@
                 </div>
 
                 <!-- Final Metrics -->
-                <div class="card mt-3" id="finalMetricsCard" style="display: none;">
+                <div class="card" id="finalMetricsCard" style="display: none;">
                     <div class="card-header">
-                        <h5><i class="fas fa-trophy"></i> Final Performance Metrics</h5>
+                        <h5><i class="fas fa-trophy me-2"></i> Final Performance Metrics</h5>
                     </div>
                     <div class="card-body">
                         <div class="row row-cols-2 row-cols-md-5 g-2 final-metrics-grid" id="finalMetrics">
@@ -247,7 +254,7 @@
                      manually-configured rules and an imported saved-strategy
                      script via an elegant segmented switch. The active mode's
                      pane is the only one visible at a time. Default = manual. -->
-                <div class="card mt-3" id="strategyCard" data-mode="manual">
+                <div class="card" id="strategyCard" data-mode="manual">
                     <div class="card-header strategy-card-header">
                         <h5 class="mb-0 strategy-card-title">Trading Strategy</h5>
                         <div class="strategy-mode-switch" role="tablist" aria-label="Strategy mode">
@@ -256,8 +263,9 @@
                                     data-mode="manual"
                                     role="tab"
                                     aria-selected="true"
-                                    aria-controls="strategyManualPane">
-                                <i class="fas fa-sliders-h"></i>
+                                    aria-controls="strategyManualPane"
+                                    id="strategyMode-manual">
+                                <i class="fas fa-sliders-h" aria-hidden="true"></i>
                                 <span>Manual</span>
                             </button>
                             <button type="button"
@@ -265,13 +273,14 @@
                                     data-mode="imported"
                                     role="tab"
                                     aria-selected="false"
-                                    aria-controls="strategyImportedPane">
-                                <i class="fas fa-file-import"></i>
-                                <span>Imported</span>
+                                    aria-controls="strategyImportedPane"
+                                    id="strategyMode-imported">
+                                <i class="fas fa-code" aria-hidden="true"></i>
+                                <span>Code</span>
                             </button>
                             <span class="strategy-mode-thumb" aria-hidden="true"></span>
                         </div>
-                        <a href="/strategy_studio?embed=1&theme={{ theme }}" class="btn btn-sm btn-open-studio strategy-open-studio" id="openStudioLink">
+                        <a href="/strategy_studio?embed=1&theme={{ theme }}" class="btn btn-sm btn-open-studio strategy-open-studio ts-header-action" id="openStudioLink">
                             <i class="fas fa-external-link-alt"></i> Open Studio
                         </a>
                     </div>
@@ -279,8 +288,8 @@
 
                         <!-- Manual pane: Beta Hedge + Trading Rules -->
                         <div class="strategy-pane" id="strategyManualPane" role="tabpanel" aria-labelledby="strategyMode-manual">
-                            <p class="text-dark small mb-3 strategy-pane-intro">
-                                Add simple trading rules executed at each step
+                            <p class="strategy-pane-intro ts-helper-copy">
+                                Add simple trading logic your portfolio can follow
                             </p>
 
                             <!-- Beta Hedge -->
@@ -290,23 +299,23 @@
                                     <label class="form-check-label" for="betaHedgeEnabled">
                                         <strong>Beta Hedge</strong>
                                         <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-placement="top"
-                                           title="Buy/Sell the index (VOO) to automatically hedge portfolio beta exposure"></i>
+                                           title="Automate the hedging of beta exposure by buying/selling the index fund (VOO)."></i>
                                     </label>
                                 </div>
                                 <div class="d-flex justify-content-between align-items-center">
-                                    <small class="text-info" id="hedgeMarginBalance">
+                                    <div class="hedge-margin-balance" id="hedgeMarginBalance">
                                         <span class="me-2">Margin Balance Available:</span>
                                         <span>$0.00</span>
-                                    </small>
+                                    </div>
                                 </div>
                             </div>
 
                             <!-- Trading Rules -->
                             <div class="mb-0">
                                 <label class="form-label">
-                                    Trading Rules
+                                    <strong>Trading Rules</strong>
                                     <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top"
-                                       title="Automated conditional buy/sell on price. Executed at each interval step."></i>
+                                       title="Continuously trade stocks based on set conditions. Click on the rule if you want it to execute only once per simulation"></i>
                                 </label>
                                 <div id="tradingRulesContainer">
                                     <div class="trading-rule mb-2" onclick="toggleOneTimeMode(this)" title="Click to toggle one-time execution mode">
@@ -337,7 +346,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="addTradingRule()">
+                                <button type="button" id="addRuleBtn" class="btn btn-sm btn-outline-primary mt-2" onclick="addTradingRule()">
                                     <i class="fas fa-plus"></i> Add Rule
                                 </button>
                             </div>
@@ -350,10 +359,9 @@
                              the imported script as the per-tick trading logic
                              in place of manual rules. -->
                         <div class="strategy-pane" id="strategyImportedPane" role="tabpanel" aria-labelledby="strategyMode-imported" hidden>
-                            <p class="text-dark small mb-2 strategy-pane-intro">
-                                Picks the script that runs in place of manual rules when you press
-                                <strong>Start Simulation</strong>. For per-second execution against
-                                live quotes, use
+                            <p class="strategy-pane-intro ts-helper-copy">
+                                Test the performance of your saved trading algorithm on historical data.
+                                For backtesting against live quotes, go to
                                 <a href="/live_trading?embed=1&theme={{ theme }}" id="importStrategyLiveLink">Live Trading</a>.
                             </p>
                             <select id="importStrategySelect" class="form-select form-select-sm mb-2" style="max-width: 320px;">
@@ -513,6 +521,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ range(1000, 9999) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/strategies-storage.js') }}?v={{ static_asset_version }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ static_asset_version }}"></script>
 </body>
 </html>

@@ -11,11 +11,8 @@
         "lint": "eslint"
     },
     "dependencies": {
-        "@auth0/nextjs-auth0": "^4.10.0",
         "@tailwindcss/postcss": "^4.1.13",
-        "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
-        "lucide-react": "^0.544.0",
         "motion": "^12.23.16",
         "next": "15.5.3",
         "postcss": "^8.5.6",

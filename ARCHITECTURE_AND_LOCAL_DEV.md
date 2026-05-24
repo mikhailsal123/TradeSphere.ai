@@ -126,7 +126,7 @@ The Flask backend provides several API endpoints:
 - `POST /start_simulation` - Start portfolio simulation
 - `GET /simulation_status/<id>` - Get simulation status
 - `POST /ai_analysis` - Get AI portfolio analysis
-- `GET /plot/<id>/<type>` - Generate performance charts
+- `GET /chart_data/<id>` - Portfolio time series for Chart.js
 
 ## Security Notes
 

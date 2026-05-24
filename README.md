@@ -44,7 +44,7 @@ export CEREBRAS_TOKEN="your-cerebras-token-here"
 python3 flask_backend.py
 ```
 
-Optional: run the standalone terminal portfolio demo with `python3 portfolio_simulation_demo.py`. For how the Next shell and Flask app connect, see `ARCHITECTURE_AND_LOCAL_DEV.md`.
+For how the Next shell and Flask app connect, see `ARCHITECTURE_AND_LOCAL_DEV.md`.
 
 ### Frontend Setup
 ```bash

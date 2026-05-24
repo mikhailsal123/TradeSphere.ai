@@ -16,7 +16,6 @@
 (function () {
     "use strict";
 
-    const STORAGE_KEY = "tradesphere_strategies_v1";
     const RUN_ID_KEY = "tradesphere_live_run_id";
     const POLL_INTERVAL_MS = 1000;
     const TOTAL_SECONDS = 300;
@@ -42,22 +41,18 @@
         positions: $("livePositions"),
         output: $("liveOutput"),
         hint: $("liveHint"),
+        marketBanner: $("liveMarketBanner"),
+        marketBannerText: $("liveMarketBannerText"),
     };
 
     let pollTimer = null;
     let currentRunId = null;
     let logCursor = 0;
     let startingCash = 100000;
+    let marketStatusTimer = null;
 
-    // ── localStorage helpers ─────────────────────────────────────────────
     function loadSaved() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            const list = raw ? JSON.parse(raw) : [];
-            return Array.isArray(list) ? list : [];
-        } catch (_e) {
-            return [];
-        }
+        return TradeSphereStrategies.loadSavedStrategies();
     }
 
     function readInitialCash() {
@@ -126,9 +121,7 @@
     }
 
     function refreshSaved() {
-        const list = loadSaved()
-            .slice()
-            .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+        const list = TradeSphereStrategies.sortByUpdatedDesc(loadSaved());
         els.savedCount.textContent = `${list.length} saved`;
         if (list.length === 0) {
             els.select.innerHTML =
@@ -182,6 +175,38 @@
             : "—";
     }
 
+    async function refreshMarketStatus() {
+        // Ping the lightweight /market_status endpoint so the banner is
+        // accurate before any run starts (and updates ~once a minute while
+        // idle so users see the state flip at 9:30 / 16:00 ET).
+        try {
+            const res = await fetch("/market_status", { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data && data.ok) updateMarketBanner(data);
+        } catch (_e) { /* ignore */ }
+    }
+
+    function updateMarketBanner(s) {
+        // Backend stamps `market_open` on every status response based on the
+        // NYSE session calendar (XNYS). When closed (weekend / holiday /
+        // before 9:30 / after 16:00 ET), the live `_buy`/`_sell` helpers
+        // already refuse to execute — this banner just makes that visible
+        // up-front so users aren't confused by an idle run.
+        if (!els.marketBanner) return;
+        const open = s && s.market_open;
+        if (open === true) {
+            els.marketBanner.classList.add("d-none");
+            return;
+        }
+        if (open === false) {
+            els.marketBanner.classList.remove("d-none");
+            if (els.marketBannerText && s.market_status_message) {
+                els.marketBannerText.textContent = s.market_status_message;
+            }
+        }
+    }
+
     function updateProgress(s) {
         const ticks = Math.max(0, Math.min(TOTAL_SECONDS, s.tick_count || 0));
         const pct = (ticks / TOTAL_SECONDS) * 100;
@@ -225,6 +250,7 @@
             }
             updateStrip(data);
             updateProgress(data);
+            updateMarketBanner(data);
             if (data.is_complete) {
                 stopPolling();
                 clearActiveRun();
@@ -374,6 +400,7 @@
                 }
                 updateStrip(data);
                 updateProgress(data);
+                updateMarketBanner(data);
                 clearActiveRun();
                 els.startBtn.disabled = !els.select.value;
                 els.stopBtn.disabled = true;
@@ -387,6 +414,7 @@
             }
             updateStrip(data);
             updateProgress(data);
+            updateMarketBanner(data);
             els.startBtn.disabled = true;
             els.stopBtn.disabled = false;
             startPolling();
@@ -406,11 +434,20 @@
 
         window.addEventListener("focus", refreshSaved);
         window.addEventListener("storage", (e) => {
-            if (e.key === STORAGE_KEY) refreshSaved();
+            if (e.key === TradeSphereStrategies.STORAGE_KEY) refreshSaved();
         });
 
         refreshSaved();
         maybeResume();
+
+        // Idle pages still need the "Market closed" banner — poll the
+        // lightweight endpoint on load and every 60s. While a run is
+        // active, the live_status payload already refreshes this every
+        // second so we don't double-ping.
+        refreshMarketStatus();
+        marketStatusTimer = setInterval(() => {
+            if (!currentRunId) refreshMarketStatus();
+        }, 60000);
     });
 
     // Stop the polling timer when the page is hidden (e.g. iframe unmount)
